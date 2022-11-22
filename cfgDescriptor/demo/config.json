@@ -1,0 +1,57 @@
+{
+    "config":[
+        {"deprecated": false, "cfg": "demo", "cfgVersion": 0, "cfgKey": 0}
+    ],
+
+    "fonts":[
+        {"id": 4, "path": "./font/ComputerModern/cmunss.ttf", "height": 62, "first": " ","last": ";"}
+    ],
+
+    "layoutDelete":[
+        {"id": 0},
+        {"id": 3}
+    ],
+
+    "layouts": [
+        {"id": 10, "name":"example_1", "x0": 30, "y0": 85, "width": 244, "height": 121, "foreColor": 15, "backColor": 0, "font": 3, "txtX0": 165, "txtY0": 49, "txtRot": 4, "txtOpacity": true, "usetxt": true,
+            "cmds" : [
+                {"type": "circle", "x": 20, "y": 100, "r": 15},
+                {"type": "circleFull", "x": 20, "y": 60, "r": 15},
+                {"type": "rect", "x0": 0, "y0": 0, "x1": 150, "y1": 150},
+                {"type": "rectFull", "x0": 3, "y0": 3, "x1": 25, "y1": 25},
+                {"type": "line", "x0": 40, "y0": 5, "x1": 70, "y1": 110},
+                {"type": "point", "x": 1, "y": 1}
+            ]
+        },
+        {"id": 11, "name":"example_2", "x0": 30, "y0": 85, "width": 244, "height": 60, "foreColor": 15, "backColor": 0, "font": 3, "txtX0": 165, "txtY0": 49, "txtRot": 4, "txtOpacity": true, "usetxt": true,
+            "cmds" : [
+                {"type": "img", "id": 12, "x": 188, "y": 8},
+                {"type": "font", "id": 1},
+                {"type": "text", "x": 90, "y": 29, "txt": "Cal"}
+            ]
+        },
+        {"id": 12, "name":"example_3", "x0": 30, "y0": 85, "width": 244, "height": 60, "foreColor": 1, "backColor": 0, "font": 3, "txtX0": 0, "txtY0": 0, "txtRot": 0, "txtOpacity": true, "usetxt": false,
+            "cmds" : [
+                {"type": "anim", "handlerId": 0, "id": 1, "delay": 150, "repeat": 255, "x": 0, "y": 0},
+                {"type": "anim", "handlerId": 1, "id": 2, "delay": 150, "repeat": 255, "x": 25, "y": 0}
+            ]
+        }
+    ],
+
+    "imgDelete":[
+        {"deprecated": false, "id": 255}
+    ],
+
+    "imgs": [
+        {"id": 1, "path": "./cfgDescriptor/demo/img/1_Chrono46x46.bmp"},
+        {"id": 12, "path": "./cfgDescriptor/demo/img/12_Calories46x46.bmp"}
+    ],
+
+    "anim": [
+        {"id": 1, "folder": "./cfgDescriptor/demo/anim/counter-15x25"},
+        {"id": 2, "gif": "./cfgDescriptor/demo/anim/loading-31x31.gif"}
+    ],
+
+    "pages": [
+    ]
+}
