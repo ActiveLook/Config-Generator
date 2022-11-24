@@ -33,9 +33,9 @@ Your graphic configuration may be uploaded on your eyewear through USB cable, or
 * Choose between :
   * `1 - Save in file`
     * Convert a config to a binary
-    * You can then load this config file to the eyewear through the SDK
+    * You can then load this config file to the eyewear through the Demo Application and/or SDK.
   * `2 - USB live test`
-    * Directly load a config into your eyewear
+    * Directly load a config into your eyewear (if USB connector is available).
 
 ## Build your own ActiveLook Configuration
 
