@@ -17,18 +17,17 @@ For Windows user please install latest release using the following link: <https:
   * `pip install bleak`
   * `pip install nest_asyncio`
   * `pip install image`
-  
+## Important
+
+Your graphic configuration may be uploaded on your eyewear through USB cable, or using Bluetooth link.
+
+* USB operation will be possible on eyewear featuring a corresponding connector (ENGO1, Cosmo Vision, Julbo EVAD-1, Microoled DK-1)
+* For eyewear based on ‘NexT’ ActiveLook platform and featuring a magnetic connector, the upload can be done through the Demo application (or, later on, using your own application).
+  * The SDK & Demo application provide the capability to upload over BLE a configuration binary file to the connected Eyewear.
+
 ## First use
 
-* Connect your glasses to your computer with a USB cable.
-* Important:
-  * this is only possible with :
-    * ENGO1
-    * Cosmo Vision
-    * Julbo EVAD-1
-    * Microoled DK-1 glasses.
-  * ENGO2 eyewear (or equivalent) with a magnetic connector can not be connected using data cable.
-
+* (if available): Connect your glasses to your computer with a USB cable.
 * Open a terminal and type `python configGenerator.py`
 
 * Choose between :
