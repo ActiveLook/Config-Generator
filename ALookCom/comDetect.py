@@ -1,8 +1,8 @@
 
 import serial
 
-from comMixed import ComMixed
-from comBin import ComBin
+from .comMixed import ComMixed
+from .comBin import ComBin
 
 def getComClass():
     dev = None

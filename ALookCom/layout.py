@@ -1,12 +1,6 @@
-
-import utils
-import display
-import fontSize
-from img import Img
-from commandPub import CommandPub
-from comMixed import ComMixed
-from comBin import ComBin
-from comBle import ComBle
+from . import fontSize
+from .img import Img
+from .commandPub import CommandPub
 
 class Layout:
     def __init__(self, com):
@@ -113,34 +107,3 @@ class Layout:
 
         cmd = self.cmd.layoutCmdGauge(1)
         return self.saveBasic(id, x, y, width, height, cmd)
-
-##### main #####
-if __name__ == '__main__':
-    com = ComBin(False)
-    #comName = com.findDeviceByName("A.LooK 000295")
-    comName = com.findDevice()
-    if not comName:
-        print("Activelook not connected")
-        exit()
-    
-    com.open(comName)
-    lay = Layout(com)
-
-    saveFuncs = [lay.saveImg, lay.saveRect, lay.saveRectF, lay.saveCircle, lay.saveCircleF, lay.saveLine, lay.savePoint, lay.saveTxt, lay.saveGauge]
-    width = 80
-    height = fontSize.getFontHeight(3) + 5
-    x = 0
-    y = 0
-    id = 0
-
-    lay.cmd.clear()
-
-    for f in saveFuncs:
-        f(id, x, y, width, height)
-        lay.cmd.layoutDisplay(id, str(id))
-
-        id += 1
-        x += width + 10
-        if x + width > display.WIDTH:
-            x = 0
-            y += height + 10

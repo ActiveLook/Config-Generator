@@ -1,7 +1,4 @@
-
-
-import utils
-from com import Com
+from .com import Com
 
 class ComFile(Com):
 
@@ -18,7 +15,7 @@ class ComFile(Com):
     ## open serial
     def open(self, device):
         self.__filename = device
-        self.__file = f = open(self.__filename, 'w')
+        self.__file = open(self.__filename, 'w')
 
     ##
     def close(self):
@@ -27,12 +24,12 @@ class ComFile(Com):
     ##
     def sendFrame(self, cmdId, data):
         frame = self.formatFrame(cmdId, data)
-        str = ''.join('{:02X}'.format(x) for x in frame)
+        str = ''.join(f'{x:02X}' for x in frame)
         self.__file.write(str + '\n')
 
     ## return : {'ret', 'cmdId', 'data'}
     def receiveFrame(self, cmdId):
-        return True
+        return  {'ret': False, 'cmdId': cmdId, 'data': []}
 
     ## receive answer to cmd
     def receiveAck(self):
@@ -48,12 +45,8 @@ class ComFile(Com):
 
     ## send data
     def sendRawData(self, bin):
-        str = ''.join('{:02X}'.format(x) for x in bin)
+        str = ''.join(f'{x:02X}' for x in bin)
         self.__file.write(str + '\n')
-
-    ## get commands data max size
-    def getDataSizeMax(self):
-        return 512
     
     ## set read timeout
     def setTimeout(self, val):

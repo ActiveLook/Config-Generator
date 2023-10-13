@@ -1,25 +1,54 @@
-import math
-import random
+import time
 
 import cv2
+import numpy as np
+import heatshrink2 as hs
 
-import utils
-from commandPub import CommandPub
+from . import utils
+from . import imgMdp08
+from . import imgMdp05
+from . import imgFmt
+from .commandPub import CommandPub
 
 class Img:
     def __init__(self, com):
         self.cmd = CommandPub(com)
         self.com = com
 
-    ## prepare command for random img saving
-    def formatCmdRandom(self, width, height, id = -1):
-        ## compress img 4 bit per pixel
+    ## convert pixels to specific format without compression
+    def convert(self, img, fmt = imgFmt.MONO_4BPP):
+        if fmt == imgFmt.MONO_4BPP:
+            return imgMdp05.convertDefault(img)
+        elif fmt == imgFmt.MONO_1BPP:
+            return imgMdp05.convert1Bpp(img)
+        elif fmt == imgFmt.STREAM_1BPP:
+            return imgMdp05.convert1Bpp(img)
+        elif fmt == imgFmt.STREAM_4BPP_HEATSHRINK:
+            return imgMdp05.convertDefault(img)
+        elif fmt == imgFmt.RYYG:
+            return imgMdp08.convertViaDistanceToRyyg(img)
+        elif fmt == imgFmt.RRYG:
+            return imgMdp08.convertViaDistanceToRryg(img)
+        elif fmt == imgFmt.MONO_4BPP_HEATSHRINK:
+            return imgMdp05.convertDefault(img)
+        elif fmt == imgFmt.MONO_4BPP_HEATSHRINK_SAVE_COMP:
+            return imgMdp05.convertDefault(img)
+        elif fmt == imgFmt.MONOALPHA_8BPP:
+            return imgMdp05.convert8Bpp(img)
+        else:
+            raise Exception("Unknown format")
+
+    ## compress 4bpp img
+    def compress4bpp(self, img):
+        height = len(img)
+        width = len(img[0])
+
         encodedImg = []
         for i in range(height):
             byte = 0
             shift = 0
-            for _ in range(width):
-                pxl = random.randint(0, 15)
+            for j in range(width):
+                pxl = img[i, j]
 
                 ## compress 4 bit per pixel
                 byte += pxl << shift
@@ -30,37 +59,21 @@ class Img:
                     shift = 0
             if shift != 0:
                 encodedImg.append(byte)
+        
+        return encodedImg
 
-        ## start save image command
-        data = []
-        if id != -1:
-            data += [id]
-        data += utils.intToList(len(encodedImg)) ## compressed size in byte
-        data += utils.uShortToList(width)
-        cmds = [self.com.formatFrame(0x41, data)]
+    ## compress 1bpp img
+    def compress1bpp(self, img):
+        height = len(img)
+        width = len(img[0])
 
-        ## pack pixels in commands
-        nbDataMax = self.com.getDataSizeMax()
-        i = 0
-        while i < len(encodedImg):
-            if nbDataMax > (len(encodedImg) - i):
-                nbDataMax = (len(encodedImg) - i)
-
-            cmds += [self.com.formatFrame(0x41, encodedImg[i:(nbDataMax + i)])]
-            i += nbDataMax
-
-        return cmds
-
-    ## prepare command for image saving, 1 bit per pixel
-    def formatCmdRandom1Bpp(self, width, height, id = -1):
-        ## compress img 1 bit per pixel
         encodedImg = []
-        for _ in range(height):
+        for i in range(height):
             byte = 0
             shift = 0
             encodedLine = []
-            for _ in range(width):
-                pxl = random.randint(0, 1)
+            for j in range(width):
+                pxl = img[i, j]
 
                 ## compress 1 bit per pixel
                 byte += pxl << shift
@@ -73,119 +86,58 @@ class Img:
                 encodedLine.append(byte)
             encodedImg.append(encodedLine)
 
+        return encodedImg
+
+    def compressHs(self, img):
+        return list(hs.compress(img, window_sz2 = 8, lookahead_sz2 = 4))
+
+    ## generate a random image
+    def generateRandom(self, width, height):
+        return np.random.randint(255, size=(height, width, 3), dtype=np.uint8)
+
+    ## prepare command to save image
+    def getCmd4Bpp(self, img, id):
+        width = len(img[0])
+
+        ## compress img 4 bit per pixel
+        encodedImg = self.compress4bpp(img)
+
         ## start save image command
-        data = []
-        if id != -1:
-            data += [id]
-        data += utils.intToList(len(encodedImg) * len(encodedImg[0])) ## compressed size in byte
-        data += utils.uShortToList(width)
-        cmds = [self.com.formatFrame(0x45, data)]
+        if id == -1:
+            ## image append, use deprecated command
+            data = utils.intToList(len(encodedImg)) ## size in byte
+            data += utils.uShortToList(width)
+            cmds = [self.com.formatFrame(0x41, data)]
+        else:
+            ## use new command with format as parameter
+            data = [id]
+            data += utils.intToList(len(encodedImg)) ## size in byte
+            data += utils.uShortToList(width)
+            data += [imgFmt.MONO_4BPP]
+            cmds = [self.com.formatFrame(0x41, data)]
 
-        ## pack lines in commands
-        ## a command must have only full line and not overflow command buffer
-        cmdDataMax = self.com.getDataSizeMax()
-        lineSize = len(encodedImg[0])
-        nbLineMax = cmdDataMax // lineSize
-        nbLine = len(encodedImg)
-        lineIdx = 0
-        while lineIdx < nbLine:
-            if nbLineMax > (nbLine - lineIdx):
-                nbLineMax = (nbLine - lineIdx)
+        ## pack pixels in commands
+        nbDataMax = self.com.getDataSizeMax()
+        i = 0
+        while i < len(encodedImg):
+            if nbDataMax > (len(encodedImg) - i):
+                nbDataMax = (len(encodedImg) - i)
 
-            data = []
-            for _ in range(nbLineMax):
-                data += encodedImg[lineIdx]
-                lineIdx += 1
-            cmds += [self.com.formatFrame(0x45, data)]
+            cmds += [self.com.formatFrame(0x41, encodedImg[i:(nbDataMax + i)])]
+            i += nbDataMax
 
         return cmds
     
-    ## prepare commands for image streaming
-    def formatStreamCmdRandom(self, width, height, x, y, id = -1):
-        ## compress img 1 bit per pixel
-        encodedImg = []
-        for _ in range(height):
-            byte = 0
-            shift = 0
-            encodedLine = []
-            for _ in range(width):
-                pxl = random.randint(0, 1)
+    ## prepare command to save image with transparency
+    def getCmd8Bpp(self, img, id):
+        width = len(img[0])
+        encodedImg = sum((list(row) for row in img), [])
 
-                ## compress 1 bit per pixel
-                byte += pxl << shift
-                shift += 1
-                if shift == 8:
-                    encodedLine.append(byte)
-                    byte = 0
-                    shift = 0
-            if shift != 0:
-                encodedLine.append(byte)
-            encodedImg.append(encodedLine)
-        
-        ## start stream command
-        data = []
-        if id != -1:
-            data += [id]
-        data += utils.intToList(len(encodedImg) * len(encodedImg[0])) ## compressed size in byte
+        ## use new command with format as parameter
+        data = [id]
+        data += utils.intToList(len(encodedImg)) ## size in byte
         data += utils.uShortToList(width)
-        data += utils.sShortToList(x)
-        data += utils.sShortToList(y)
-        cmds = [self.com.formatFrame(0x44, data)]
-
-        ## pack lines in commands
-        ## a command must have only full line and not overflow command buffer
-        cmdDataMax = self.com.getDataSizeMax()
-        lineSize = len(encodedImg[0])
-        nbLineMax = cmdDataMax // lineSize
-        nbLine = len(encodedImg)
-        lineIdx = 0
-        while lineIdx < nbLine:
-            if nbLineMax > (nbLine - lineIdx):
-                nbLineMax = (nbLine - lineIdx)
-
-            data = []
-            for _ in range(nbLineMax):
-                data += encodedImg[lineIdx]
-                lineIdx += 1
-            cmds += [self.com.formatFrame(0x44, data)]
-
-        return cmds
-
-    ## prepare command for image saving
-    def formatCmd(self, filePath, id = -1):
-        img = cv2.imread(filePath)
-        img2 = cv2.rotate(img, cv2.ROTATE_180)
-        
-        gray = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
-
-        height = img.shape[0]
-        width = img.shape[1]
-
-        ## compress img 4 bit per pixel
-        encodedImg = []
-        for i in range(height):
-            byte = 0
-            shift = 0
-            for j in range(width):
-                ## convert gray8bit to gray4bit
-                pxl = round(gray[i,j] / 17)
-
-                ## compress 4 bit per pixel
-                byte += pxl << shift
-                shift += 4
-                if shift == 8:
-                    encodedImg.append(byte)
-                    byte = 0
-                    shift = 0
-            if shift != 0:
-                encodedImg.append(byte)
-
-        ## start save image command
-        data = []
-        if id != -1:
-            data += [id]
-        data += utils.intToList(len(encodedImg)) ## compressed size in byte
-        data += utils.uShortToList(width)
+        data += [imgFmt.MONOALPHA_8BPP]
         cmds = [self.com.formatFrame(0x41, data)]
 
         ## pack pixels in commands
@@ -200,47 +152,60 @@ class Img:
 
         return cmds
 
-    ## prepare command for image saving, 1 bit per pixel
-    def formatCmd1Bpp(self, filePath, id = -1):
-        img = cv2.imread(filePath)
-        img2 = cv2.rotate(img, cv2.ROTATE_180)
+    # send compressed data to the firmware
+    def getCmdCompress4BppHeatshrink(self, img, id, fmt):
+        width = len(img[0])
+
+        ## compress img 4 bit per pixel
+        encodedImg = self.compress4bpp(img)
         
-        gray = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
-
-        height = img.shape[0]
-        width = img.shape[1]
-
-        ## compress img 1 bit per pixel
-        encodedImg = []
-        for i in range(height):
-            byte = 0
-            shift = 0
-            encodedLine = []
-            for j in range(width):
-                ## convert gray8bit in gray1bit
-                if (gray[i,j] > 0):
-                    pxl = 1
-                else:
-                    pxl = 0
-
-                ## compress 1 bit per pixel
-                byte += pxl << shift
-                shift += 1
-                if shift == 8:
-                    encodedLine.append(byte)
-                    byte = 0
-                    shift = 0
-            if shift != 0:
-                encodedLine.append(byte)
-            encodedImg.append(encodedLine)
+        ## compress 4bpp image with heatshrink
+        compressedImg = self.compressHs(encodedImg)
 
         ## start save image command
-        data = []
-        if id != -1:
-            data += [id]
-        data += utils.intToList(len(encodedImg) * len(encodedImg[0])) ## compressed size in byte
-        data += utils.uShortToList(width)
-        cmds = [self.com.formatFrame(0x45, data)]
+        assert (id != -1), "image append not supported with heatshrink compression"
+        data = [id]
+        data += utils.intToList(len(encodedImg)) # image size before Heatshrink compression
+        data += utils.uShortToList(width)        # image width in pixel
+        if fmt in [imgFmt.MONO_4BPP_HEATSHRINK, imgFmt.MONO_4BPP_HEATSHRINK_SAVE_COMP]:
+            data += [fmt]                        # specify the format 
+        else:
+            raise Exception("Unknown format")
+
+        cmds = [self.com.formatFrame(0x41, data)]
+
+        ## pack pixels in commands
+        nbDataMax = self.com.getDataSizeMax()
+        i = 0
+        while i < len(compressedImg):
+            if nbDataMax > (len(compressedImg) - i):
+                nbDataMax = (len(compressedImg) - i)
+
+            cmds += [self.com.formatFrame(0x41, compressedImg[i:(nbDataMax + i)])]
+            i += nbDataMax
+
+        return cmds
+
+    ## prepare command for image saving, 1 bit per pixel
+    def getCmd1Bpp(self, img, id):
+        width = len(img[0])
+
+        ## compress img 1 bit per pixel
+        encodedImg = self.compress1bpp(img)
+
+        ## start save image command
+        if id == -1:
+            ## image append, use deprecated command
+            data = utils.intToList(len(encodedImg) * len(encodedImg[0])) ## size in byte
+            data += utils.uShortToList(width)
+            cmds = [self.com.formatFrame(0x45, data)]
+        else:
+            ## use new command with format as parameter
+            data = [id]
+            data += utils.intToList(len(encodedImg) * len(encodedImg[0])) ## size in byte
+            data += utils.uShortToList(width)
+            data += [imgFmt.MONO_1BPP]
+            cmds = [self.com.formatFrame(0x41, data)]
 
         ## pack lines in commands
         ## a command must have only full line and not overflow command buffer
@@ -257,49 +222,24 @@ class Img:
             for i in range(nbLineMax):
                 data += encodedImg[lineIdx]
                 lineIdx += 1
-            cmds += [self.com.formatFrame(0x45, data)]
+            cmds += [self.com.formatFrame(0x41, data)]
 
         return cmds
 
-    ## prepare commands for image streaming
-    def formatStreamCmd(self, filePath, x, y):
-        img = cv2.imread(filePath)
-        img2 = cv2.rotate(img, cv2.ROTATE_180)
+    ## prepare command for image streaming
+    def getCmdStream1Bpp(self, img, x, y, useDeprecateCmd = False):
+        width = len(img[0])
         
-        gray = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
-
-        height = img.shape[0]
-        width = img.shape[1]
-
         ## compress img 1 bit per pixel
-        encodedImg = []
-        for i in range(height):
-            byte = 0
-            shift = 0
-            encodedLine = []
-            for j in range(width):
-                ## convert gray8bit in gray1bit
-                if (gray[i,j] > 0):
-                    pxl = 1
-                else:
-                    pxl = 0
-
-                ## compress 1 bit per pixel
-                byte += pxl << shift
-                shift += 1
-                if shift == 8:
-                    encodedLine.append(byte)
-                    byte = 0
-                    shift = 0
-            if shift != 0:
-                encodedLine.append(byte)
-            encodedImg.append(encodedLine)
+        encodedImg = self.compress1bpp(img)
         
         ## start stream command
         data = utils.intToList(len(encodedImg) * len(encodedImg[0])) ## compressed size in byte
         data += utils.uShortToList(width)
         data += utils.sShortToList(x)
         data += utils.sShortToList(y)
+        if not useDeprecateCmd:
+            data += [imgFmt.MONO_1BPP]
         cmds = [self.com.formatFrame(0x44, data)]
 
         ## pack lines in commands
@@ -321,131 +261,182 @@ class Img:
 
         return cmds
 
+        ## prepare command for image streaming
+    def getCmdStreamHs(self, img, x, y):
+        width = len(img[0])
+        
+        ## compress img 4 bit per pixel
+        encodedImg = self.compress4bpp(img)
+        
+        ## compress 4bpp image with heatshrink
+        compressedImg = self.compressHs(encodedImg)
+        
+        ## start stream command
+        data = utils.intToList(len(encodedImg)) # image size before Heatshrink compression
+        data += utils.uShortToList(width)
+        data += utils.sShortToList(x)
+        data += utils.sShortToList(y)
+        data += [imgFmt.MONO_4BPP_HEATSHRINK]
+        cmds = [self.com.formatFrame(0x44, data)]
+
+        ## pack pixels in commands
+        nbDataMax = self.com.getDataSizeMax()
+        i = 0
+        while i < len(compressedImg):
+            if nbDataMax > (len(compressedImg) - i):
+                nbDataMax = (len(compressedImg) - i)
+
+            cmds += [self.com.formatFrame(0x44, compressedImg[i:(nbDataMax + i)])]
+            i += nbDataMax
+
+        return cmds
+
+    ## prepare command for image saving
+    ## param is format specific
+    def getCmd(self, img, id = -1, fmt = imgFmt.MONO_4BPP, param = {}):
+        img = self.convert(img, fmt)
+        
+        if fmt == imgFmt.MONO_1BPP:
+            cmds = self.getCmd1Bpp(img, id)
+        elif fmt == imgFmt.STREAM_1BPP:
+            x = param['x']
+            y = param['y']
+            useDeprecateCmd = param['useDeprecateCmd']
+            cmds = self.getCmdStream1Bpp(img, x, y, useDeprecateCmd)
+        elif fmt == imgFmt.STREAM_4BPP_HEATSHRINK:
+            x = param['x']
+            y = param['y']
+            cmds = self.getCmdStreamHs(img, x, y)
+        elif fmt in [imgFmt.MONO_4BPP_HEATSHRINK, imgFmt.MONO_4BPP_HEATSHRINK_SAVE_COMP]:
+            cmds = self.getCmdCompress4BppHeatshrink(img, id, fmt)
+        elif fmt == imgFmt.MONOALPHA_8BPP:
+            cmds = self.getCmd8Bpp(img, id)
+        else:
+            ## 4bpp format
+            cmds = self.getCmd4Bpp(img, id)
+        
+        return cmds
+
     ##
-    def appendImageRandom(self, width, height):       
+    def appendImageRandom(self, width, height, fmt = imgFmt.MONO_4BPP):
+        return self.saveImageRandom(-1, width, height, fmt)
+
+    ##
+    def appendImage(self, filename = "img/smiley.png", fmt = imgFmt.MONO_4BPP):
+        return self.saveImage(-1, filename, fmt)
+
+    ##
+    def saveImageRandom(self, id, width, height, fmt = imgFmt.MONO_4BPP, param = {}):
+        img = self.generateRandom(width, height)
+        
         ## convert image
-        cmds = self.formatCmdRandom(width, height)
+        cmds = self.getCmd(img, id, fmt, param)
 
         ## send commands
-        for c in cmds:
+        for i, c in enumerate(cmds):
             self.com.sendRawData(c)
             if not self.com.receiveAck():
+                print(f"saveImageRandom cmd {i + 1}/{len(cmds)} failed")
+                return False
+        
+        return True
+
+    ## save image according to a chosen format 
+    def saveImage(self, id, filename = "img/smiley.png", fmt = imgFmt.MONO_4BPP, param = {}):
+        if (fmt == imgFmt.MONOALPHA_8BPP):
+            ## alpha channel is kept to use transparency
+            img = cv2.imread(filename, cv2.IMREAD_UNCHANGED)
+        else:
+            ## alpha channel is cropped
+            img = cv2.imread(filename) 
+
+        ## convert image
+        cmds = self.getCmd(img, id, fmt, param)
+
+        ## send commands
+        for i, c in enumerate(cmds):
+            self.com.sendRawData(c)
+            if not self.com.receiveAck():
+                print(f"saveImage cmd {i + 1}/{len(cmds)} failed")
                 return False
         
         return True
 
     ##
-    def appendImage(self, filename = "img/smiley.png"):
-        ## convert image
-        cmds = self.formatCmd(filename)
-
-        ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
-        
-        return True
+    def saveImageHeatshrink(self, id, filename = "img/smiley.png"):
+        return self.saveImage(id, filename, imgFmt.MONO_4BPP_HEATSHRINK)
 
     ##
-    def saveImageRandom(self, id, width, height):
-        ## convert image
-        cmds = self.formatCmdRandom(width, height, id)
-
-        ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
-        
-        return True
+    def saveImageRandomHeatshrink(self, id, width, height):
+        return self.saveImageRandom(id, width, height, imgFmt.MONO_4BPP_HEATSHRINK)
 
     ##
-    def saveImage(self, id, filename = "img/smiley.png"):
-        ## convert image
-        cmds = self.formatCmd(filename, id)
-
-        ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
-        
-        return True
-
     def saveImage1bpp(self, id, filename = "img/smiley.png"):
-        ## convert image
-        cmds = self.formatCmd1Bpp(filename, id)
-
-        ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
-        
-        return True
+        return self.saveImage(self, id, filename, imgFmt.MONO_1BPP)
 
     ##
     def appendImage1Bpp(self, filename = "img/smiley.png"):
-        ## convert image
-        cmds = self.formatCmd1Bpp(filename)
-
-        ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
-
-        return True
+        return self.appendImage(filename, imgFmt.MONO_1BPP)
 
     ##
     def appendImageRandom1Bpp(self, width, height):
-        ## convert image
-        cmds = self.formatCmdRandom1Bpp(width, height)
-
-        ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
-
-        return True
+        return self.appendImageRandom(width, height, imgFmt.MONO_1BPP)
 
     ##
     def saveImageRandom1Bpp(self, id, width, height):
-        ## convert image
-        cmds = self.formatCmdRandom1Bpp(width, height, id)
-
-        ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
-
-        return True
+        return self.saveImageRandom(id, width, height, imgFmt.MONO_1BPP)
 
     ## display an image with streaming
-    def stream(self, x = 0, y = 0, filename='img/smiley.png'):
-        ## convert image
-        cmds = self.formatStreamCmd(filename, x, y)
-
-        ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
-        
-        return True
+    def stream(self, x = 0, y = 0, filename='img/smiley.png', fmt = imgFmt.STREAM_4BPP_HEATSHRINK, useDeprecateCmd = False):
+        param = {'x': x, 'y': y, 'useDeprecateCmd': useDeprecateCmd}
+        return self.saveImage(-1, filename, fmt, param)
 
     ## display an image with streaming
     def streamRandom(self, width, height,  x = 0, y = 0):
-        ## convert image
-        cmds = self.formatStreamCmdRandom(width, height, x, y)
+        param = {'x': x, 'y': y}
+        return self.saveImageRandom(-1, width, height, imgFmt.STREAM_1BPP, param)
 
+    ## display an gif with streaming
+    def streamGif(self, x = 0, y = 0, gif='anim/monkey-228x228.gif', repeat = 0, fmt = imgFmt.STREAM_4BPP_HEATSHRINK, invertColor = True):
+        print("Converting imgs...")
+
+        ## get all images from the gif
+        cap = cv2.VideoCapture(gif)
+        imgLst = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if invertColor:
+                frame = 255 - frame
+            
+            imgLst.append(frame)
+        cap.release()
+
+        ## get streaming commands for each images
+        streamCmd = []
+        for img in imgLst:
+            param = {'x': x, 'y': y, 'useDeprecateCmd': False}
+            cmd = self.getCmd(img, -1, fmt, param)
+            streamCmd += [cmd]
+        
         ## send commands
-        for c in cmds:
-            self.com.sendRawData(c)
-            if not self.com.receiveAck():
-                return False
+        print("Sending imgs...")
+        cnt = 0
+        start = time.perf_counter()
+        for _ in range(repeat + 1):
+            for cmdLst in streamCmd:
+                for c in cmdLst:
+                    self.com.sendRawData(c)
+                    if not self.com.receiveAck():
+                        print("Stream cmd failed")
+                        return False
+
+                ## measure perf
+                cnt += 1
+                if (cnt % 20) == 0:
+                    fps = cnt / (time.perf_counter() - start)
+                    print(f"Stream {fps:.2f} FPS")
         
         return True

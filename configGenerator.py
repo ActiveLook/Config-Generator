@@ -4,12 +4,15 @@ import sys
 
 from ALookCom.anim import Anim
 from ALookCom.img import Img
+import ALookCom.imgFmt as imgFmt
 from ALookCom.layout import Layout
 from ALookCom.commandPub import CommandPub
 from ALookCom.comBin import ComBin
 from ALookCom.comFile import ComFile
 
 import sensorParam
+import setTimer
+
 
 class ConfigGenerator:
     def __init__(self, com):
@@ -19,14 +22,25 @@ class ConfigGenerator:
         self.layout = Layout(com)
         self.com = com
 
-    
     def parseJson(self, path):
         # read file
         f = open(path, 'r')
         cfg = json.load(f)
         f.close()
 
-        ## write config, without version (in case of failure)
+        # image conversion format as string
+        # formats save image decompressed and save image compressed are added
+        imgFmtDict = {
+            "mono_4bpp": imgFmt.MONO_4BPP,
+            "mono_1bpp": imgFmt.MONO_1BPP,
+            "mono_4bpp_heatshrink": imgFmt.MONO_4BPP_HEATSHRINK,
+            "mono_4bpp_heatshrink_save_comp": imgFmt.MONO_4BPP_HEATSHRINK_SAVE_COMP,
+            "ryyg": imgFmt.RYYG,
+            'rryg': imgFmt.RRYG,
+            "mono_alpha_8bpp": imgFmt.MONOALPHA_8BPP
+            }
+
+        # write config, without version (in case of failure)
         if 'config' in cfg:
             for config in cfg['config']:
                 if config['deprecated']:
@@ -38,21 +52,25 @@ class ConfigGenerator:
                         print("cmd cfgWrite failed")
                         return False
 
-        ## save fonts
+        # save fonts
         if 'fonts' in cfg:
             for font in cfg['fonts']:
-                if not self.cmd.fontSave(font['id'], font['height'], font['path'], font['first'], font['last']):
+                baseline = 0.25
+                if 'baseline' in font:
+                    baseline = font['baseline']
+
+                if not self.cmd.fontSave(font['id'], font['height'], font['path'], font['first'], font['last'], baseline):
                     print("failed to save font: {}".format(font['path']))
                     return False
 
-        ## layoutDelete
+        # layoutDelete
         if 'layoutDelete' in cfg:
             for layoutDelete in cfg['layoutDelete']:
                 if not self.cmd.layoutDelete(layoutDelete['id']):
                     print("cmd layoutDelete failed")
-                    return False 
+                    return False
 
-        ## save layouts
+        # save layouts
         if 'layouts' in cfg:
             for lay in cfg['layouts']:
                 cmds = []
@@ -84,25 +102,25 @@ class ConfigGenerator:
                         return False
 
                 ret = self.cmd.layoutSave(
-                    id = lay['id'],
-                    x0 = lay['x0'],
-                    y0 = lay['y0'],
-                    width = lay['width'],
-                    height = lay['height'],
-                    foreColor = lay['foreColor'],
-                    backColor = lay['backColor'],
-                    font = lay['font'],
-                    txtX0 = lay['txtX0'],
-                    txtY0 = lay['txtY0'],
-                    txtRot = lay['txtRot'],
-                    txtOpacity = lay['txtOpacity'],
-                    usetxt = lay['usetxt'],
-                    cmd = cmds)
+                    id=lay['id'],
+                    x0=lay['x0'],
+                    y0=lay['y0'],
+                    width=lay['width'],
+                    height=lay['height'],
+                    foreColor=lay['foreColor'],
+                    backColor=lay['backColor'],
+                    font=lay['font'],
+                    txtX0=lay['txtX0'],
+                    txtY0=lay['txtY0'],
+                    txtRot=lay['txtRot'],
+                    txtOpacity=lay['txtOpacity'],
+                    usetxt=lay['usetxt'],
+                    cmd=cmds)
                 if not ret:
                     print("failed to save layout {}#".format(lay['id']))
                     return False
 
-        ## imgDelete
+        # imgDelete
         if 'imgDelete' in cfg:
             for imgDelete in cfg['imgDelete']:
                 if imgDelete['deprecated']:
@@ -112,17 +130,29 @@ class ConfigGenerator:
                 else:
                     if not self.cmd.imgDelete(imgDelete['id']):
                         print("cmd imgDelete failed")
-                        return False 
+                        return False
 
-        ## save images
+        # fontDelete
+        if 'fontDelete' in cfg:
+            for fontDelete in cfg['fontDelete']:
+                if not self.cmd.fontDelete(fontDelete['id']):
+                    print("cmd fontDelete failed")
+                    return False
+
+        # save images
         if 'imgs' in cfg:
             for img in cfg['imgs']:
-                if not self.img.saveImage(img['id'], img['path']):
+                fmt = imgFmt.MONO_4BPP_HEATSHRINK
+                if 'fmt' in img:
+                    fmt = imgFmtDict[img['fmt']]
+
+                ret = self.img.saveImage(img['id'], img['path'], fmt)
+
+                if not ret:
                     print("failed to save image: {}".format(img['path']))
                     return False
 
-
-        ## save pages
+        # save pages
         if 'pages' in cfg:
             for p in cfg['pages']:
                 layouts = []
@@ -132,41 +162,30 @@ class ConfigGenerator:
                     print("failed to save page {}#".format(p['id']))
                     return False
 
-        ## save animation
+        # save animation
         if 'anim' in cfg:
             for a in cfg['anim']:
+                fmt = imgFmt.MONO_4BPP_HEATSHRINK
+                if 'fmt' in a:
+                    fmt = imgFmtDict[a['fmt']]
+
                 if 'gif' in a:
-                    if not self.anim.saveAnimationGif(a['id'], a['gif'], False):
+                    if not self.anim.saveAnimationGif(a['id'], a['gif'], False, fmt):
                         print("failed to save animation: {}".format(a['gif']))
                         return False
                 else:
-                    if not self.anim.saveAnimation(a['id'], a['folder']):
+                    if not self.anim.saveAnimation(a['id'], a['folder'], fmt):
                         print("failed to save animation: {}".format(a['folder']))
                         return False
 
-        ## Sensor
+        # Sensor
         if not sensorParam.setSensorParam(self.com, cfg):
             return False
 
-        if 'sensor' in cfg:
-            for sensor in cfg['sensor']:
-                if not self.cmd.enableSensor(sensor['all']):
-                    print("cmd setSensorAlsArray failed")
-                    return False   
+        if not setTimer.setTimer(self.com, cfg):
+            return False
 
-        if 'luma' in cfg:
-            for lum in cfg['luma']:
-                if not self.cmd.luma(lum['val']):
-                    print("cmd luma failed")
-                    return False
-
-        if 'timers' in cfg:
-            for timer in cfg['timers']:
-                if not self.cmd.setTimers(timer['id'], timer['duration']):
-                    print("cmd setTimers failed")
-                    return False
-
-        ## update config version
+        # update config version
         if 'config' in cfg:
             for config in cfg['config']:
                 if config['deprecated']:
@@ -185,14 +204,12 @@ class ConfigGenerator:
                         return False
         return True
 
-    
     def cyclePages(self):
-        lst = self.cmd.pageList()
-        if not lst['ret']:
+        ret, lst = self.cmd.pageList()
+        if not ret:
             print('failed to list pagess')
             return False
-        
-        lst = lst['ids']
+
         if len(lst) == 0:
             print('no page to display')
             return True
@@ -209,14 +226,12 @@ class ConfigGenerator:
 
             input('Press Enter to continue')
 
-
     def cycleLayouts(self):
-        lst = self.cmd.layoutList()
-        if not lst['ret']:
+        ret, lst = self.cmd.layoutList()
+        if not ret:
             print('failed to list layouts')
             return False
-        
-        lst = lst['layoutIdx']
+
         if len(lst) == 0:
             print('no layout to display')
             return True
@@ -232,14 +247,12 @@ class ConfigGenerator:
 
             input('Press Enter to continue')
 
-
     def cycleImages(self):
-        lst = self.cmd.imgList()
-        if not lst['ret']:
+        ret, lst = self.cmd.imgList()
+        if not ret:
             print('failed to list images')
             return False
-        
-        lst = lst['img']
+
         if len(lst) == 0:
             print('no image to display')
             return True
@@ -256,11 +269,11 @@ class ConfigGenerator:
             input('Press Enter to continue')
 
 
-##### main #####
+# --- main ---
 if __name__ == '__main__':
     folder = 'cfgDescriptor'
     sub_folders = [name for name in os.listdir(folder) if os.path.isdir(os.path.join(folder, name))]
-    folderChoosen =''
+    folderChoosen = ''
     mode = input("mode:\n1 - Save in file\n2 - USB live test\n")
     if mode == "1":
         com = ComFile(True)
@@ -270,18 +283,18 @@ if __name__ == '__main__':
         comName = com.findDevice()
     else:
         sys.exit(1)
-    
+
     if not comName:
         print("Activelook not connected")
         sys.exit()
 
     com.open(comName)
     generator = ConfigGenerator(com)
-    
+
     temp = "Choose a file"
     for f in range(len(sub_folders)):
-        temp+= f"\n{f+1}  - {sub_folders[f]}"
-    temp+="\n"
+        temp += f"\n{f+1}  - {sub_folders[f]}"
+    temp += "\n"
     folderChoosen = sub_folders[int(input(temp))-1]
 
     folderPath = f"cfgDescriptor/{folderChoosen}/config.json"
@@ -303,6 +316,3 @@ if __name__ == '__main__':
             print("unknown mode")
 
     generator.com.close()
-
-    #input('Press Enter to exit')
-    

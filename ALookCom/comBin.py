@@ -3,14 +3,13 @@
 ## data sent on USB are in binary format
 ## -------------------------------------------------------
 
-import struct
 from time import sleep, time
 
 import serial.tools.list_ports
 import serial
 
-import utils
-from com import Com
+from . import utils
+from .com import Com
 
 class ComBin(Com):
     __FRAME_FMT_QUERY_LEN_MSK = 0x0F
@@ -127,7 +126,7 @@ class ComBin(Com):
 
         if self.__rcvCmdId == 0xB4:
             ## USB text
-            print("msg: {}".format(bytearray(self.__rcvData).decode('ascii')))
+            print(f"msg: {bytearray(self.__rcvData).decode('ascii')}")
             ret = True
         elif self.__rcvCmdId == 0x07:
             ## Command echo
@@ -135,7 +134,7 @@ class ComBin(Com):
             ret = True
         elif self.__rcvCmdId == 0xE2:
             ## error
-            print("error: cmdId = {}, err = {}, sub = {}".format(self.__rcvData[0], self.__rcvData[1], self.__rcvData[2]))
+            self._rcvError(self.__rcvQuery, self.__rcvData[0], self.__rcvData[1], self.__rcvData[2])
             ret = True
 
         return ret
@@ -154,13 +153,30 @@ class ComBin(Com):
             i += subLen
         self.printFrame("Send Frame", data)
     
+    ## read data
+    def __read(self, size=1):
+        retry  = 20
+        lastError = None
+
+        while retry > 0:
+            try:
+                return self.__ser.read(size)
+            except serial.SerialException as err:
+                ## this can happen on linux after device reboot
+                ## device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+                sleep(0.2)
+                retry -= 1
+                lastError = err
+
+        raise lastError
+
     ## Look for com port with active look VID PID
     def findDevice(self, timeout=15):
         t1 = time()
         while abs(time()-t1) < timeout:
             ports = serial.tools.list_ports.comports()
             for p in ports:
-                if (p.vid == 0xFFFE) and (p.pid == 0x1112):
+                if (p.vid == 0xFFFE) and (p.pid == 0x1112) and (p.device != ''):
                     return p.device
 
         return 
@@ -170,7 +186,7 @@ class ComBin(Com):
         while abs(time()-t1) < timeout:
             ports = serial.tools.list_ports.comports()
             for p in ports:
-                if (p.vid == 0xFFFE) and (p.pid == 0x1112) and (p.serial_number == serId):
+                if (p.vid == 0xFFFE) and (p.pid == 0x1112) and (p.serial_number == serId) and (p.device != ''):
                     return p.device
 
         return 
@@ -178,25 +194,56 @@ class ComBin(Com):
     ## open serial
     def open(self, device):
         self.device = device
-        self.__ser = serial.Serial(device, timeout=10.0)
+        retry = 30
+        connected = False
+
+        ## retry are for reconnection just after windows detection
+        while (retry > 0) and not connected:
+            try:
+                self.__ser = serial.Serial(device, timeout=10.0)
+                connected = True
+            except serial.SerialException:
+                retry -= 1
+                sleep(1)
+
+        if retry == 0 or not connected:
+            raise serial.SerialException
+
+
+    ## wait Com port to be colsed by device
+    def waitForDeviceClose(self, timeout=20):
+            start = time()
+            while time() - start < timeout:
+                try:
+                    isinstance(self.__ser.in_waiting, int)
+                except:
+                    ## on failure the device is closed
+                    return
+            assert False, "Timeout on waiting for device disconnect"
 
 
     ## find device et open port when new driver is installed
     def reopenChangeID(self, serialId):
-        sleep(10)
+        ## wait for disconnect
+        self.waitForDeviceClose()
+        self.close()
+
+        ## reopen
         device = self.findDeviceBySerialId(serialId)
         assert device, "device not connected"
-        self.device = device
-        self.__ser = serial.Serial(device, timeout=10.0)
+        self.open(device)
 
 
     ## find device et open when restart but no new driver installed
     def reopen(self):
-        sleep(8)
+        ## wait for disconnect
+        self.waitForDeviceClose()
+        self.close()
+
+        ## reopen
         device = self.findDevice()
         assert device, "device not connected"
-        self.device = device
-        self.__ser = serial.Serial(device, timeout=10.0)
+        self.open(device)
 
 
     ##
@@ -204,8 +251,8 @@ class ComBin(Com):
         self.__ser.close()
         
     ##
-    def sendFrame(self, cmdId, data):
-        frame = self.formatFrame(cmdId, data)
+    def sendFrame(self, cmdId, data, queryId=[]):
+        frame = self.formatFrame(cmdId, data, queryId)
         self.__sendData(frame)
 
     ## return : {'ret', 'cmdId', 'data'}
@@ -213,23 +260,23 @@ class ComBin(Com):
         nack = bytes([0xF1])
 
         while 1:
-            b = self.__ser.read(1)
+            b = self.__read(1)
             if len(b) != 1:
                 ## Timeout
-                return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData}
+                return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData, 'query': self.__rcvQuery}
 
             if self.__rcvState == self.__RCV_STATE_START:
                 if b == nack:
                     print("received NACK")
-                    return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData}
+                    return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData, 'query': self.__rcvQuery}
             
             if self.__rcvByte(b[0]):
                 if self.__rcvCmdId == cmdId:
-                    return  {'ret': True, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData}
+                    return  {'ret': True, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData, 'query': self.__rcvQuery}
                 else:
                     if not self.__asyncData():
                         self.printFrameError("wrong cmd Id received", self.__rcvRawFrame)
-                        return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData}
+                        return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData, 'query': self.__rcvQuery}
 
     ## receive answer to cmd
     def receiveAck(self):
@@ -241,7 +288,7 @@ class ComBin(Com):
         nack = bytes([0xF1])
 
         while 1:
-            data = self.__ser.read(1)
+            data = self.__read(1)
 
             if len(data) != 1:
                 ## timeout
@@ -253,14 +300,9 @@ class ComBin(Com):
                     elif data == nack:
                         print("received NACK")
                         return False
-                    else:
-                        if self.__rcvByte(data[0]):
-                            if not self.__asyncData():
-                                self.printFrameError("Wrong ack", self.__rcvRawFrame)
-                else:
-                    if self.__rcvByte(data[0]):
-                        if not self.__asyncData():
-                            self.printFrameError("Wrong ack", self.__rcvRawFrame)
+                if self.__rcvByte(data[0]):
+                    if not self.__asyncData():
+                        self.printFrameError("Wrong ack", self.__rcvRawFrame)
 
     ##
     def receiveUsbMsg(self):
@@ -268,7 +310,7 @@ class ComBin(Com):
         nack = bytes([0xF1])
 
         while 1:
-            data = self.__ser.read(1)
+            data = self.__read(1)
 
             if len(data) != 1:
                 ## timeout
@@ -276,36 +318,24 @@ class ComBin(Com):
             else:
                 if self.__rcvState == self.__RCV_STATE_START:
                     if data == ack:
-                        return True
+                        return ""
                     elif data == nack:
                         print("received NACK")
                         return ""
-                    else:
-                        if self.__rcvByte(data[0]):
-                            if self.__rcvCmdId == 0xB5:
-                                return self.__rcvData
-                            if not self.__asyncData():
-                                self.printFrameError("Wrong ack", self.__rcvRawFrame)
-                else:
-                    if self.__rcvByte(data[0]):
-                        if self.__rcvCmdId == 0xB5:
-                                return utils.listToStr(self.__rcvData)
-                        if not self.__asyncData():
-                            self.printFrameError("Wrong ack", self.__rcvRawFrame)
+
+                if self.__rcvByte(data[0]):
+                    if self.__rcvCmdId == 0xB4:
+                        return utils.listToStr(self.__rcvData)
+                    if not self.__asyncData():
+                        self.printFrameError("Wrong ack", self.__rcvRawFrame)
 
     ## send data
     def sendRawData(self, bin):
         self.__sendData(bin)
-
-    ## get commands data max size
-    def getDataSizeMax(self):
-        return 512
     
     ## set read timeout
     def setTimeout(self, val):
-        setting = self.__ser.get_settings()
-        setting['timeout'] = val
-        self.__ser.apply_settings(setting)
+        self.__ser.timeout = val
 
     ## get read timeout
     def getTimeout(self):

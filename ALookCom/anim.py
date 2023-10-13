@@ -2,17 +2,16 @@ import os
 
 import cv2
 
-import utils
-from img import Img
-from commandPub import CommandPub
+from . import utils
+from . import imgFmt
+from .img import Img
 
 
 class Anim:
     def __init__(self, com):
-        self.cmd = CommandPub(com)
-        self.img = img = Img(com)
         self.com = com
-    
+        self.img = Img(com)
+
     ## return the number of elements before the fist difference
     def _sameValueLen(self, la, lb):
         assert(len(la) == len(lb)), "different length is not handled"
@@ -42,52 +41,35 @@ class Anim:
         return cnt
 
     ## encode full image for animation
-    def _encodFullImgCmd(self, img):
-        height = img.shape[0]
-        width = img.shape[1]
-
-        ## compress img 4 bit per pixel
-        encodedImg = []
-        for i in range(height):
-            byte = 0
-            shift = 0
-            for j in range(width):
-                ## convert gray8bit to gray4bit
-                pxl = round(img[i, j] / 17)
-
-                ## compress 4 bit per pixel
-                byte += pxl << shift
-                shift += 4
-                if shift == 8:
-                    encodedImg.append(byte)
-                    byte = 0
-                    shift = 0
-            if shift != 0:
-                encodedImg.append(byte)
-
-        return encodedImg
-
-    ### reduce pixel range to 16 level of grey but keep it on 1 byte
-    def _reducePxlRange(self, img):
-        for i, line in enumerate(img):
-            for j, plx in enumerate(line):
-                pxl = round(plx / 17)
-                img[i][j] = pxl
-        
-        return img
+    def _encodFullImgCmd(self, fmt, img):
+        if fmt in [imgFmt.MONO_4BPP, imgFmt.RYYG, imgFmt.RRYG]:
+            encodedImg = self.img.compress4bpp(img)
+            return (encodedImg, len(encodedImg), len(encodedImg))
+        elif fmt == imgFmt.MONO_4BPP_HEATSHRINK:
+            encodedImg = self.img.compress4bpp(img)
+            compressedImg = self.img.compressHs(encodedImg)
+            return (compressedImg, len(encodedImg), len(compressedImg))
+        else:
+            raise Exception("unsupported format")
 
     ## prepare command for animation saving
-    def formatCmd(self, id, imgs):
+    def getCmd(self, id, imgs, fmt = imgFmt.MONO_4BPP, useDeprecateCmd = False):
+        if useDeprecateCmd:
+            assert(fmt in [imgFmt.MONO_4BPP])
+        else:
+            assert(fmt in [imgFmt.MONO_4BPP, imgFmt.MONO_4BPP_HEATSHRINK, imgFmt.RYYG, imgFmt.RRYG])
+
+        firstImg = self.img.convert(imgs[0], fmt)
+
         ## first image encoded as complete image
-        rawAnim = self._encodFullImgCmd(imgs[0])
-        imgSize = len(rawAnim)
+        (rawAnim, imgSize, compressedSize) = self._encodFullImgCmd(fmt, firstImg)
 
-        prev = self._reducePxlRange(imgs[0])
+        prev = firstImg
 
-        width = imgs[0].shape[1]
+        width = firstImg.shape[1]
 
         for img in imgs[1:]:
-            img = self._reducePxlRange(img)
+            img = self.img.convert(img, fmt)
 
             ## crop width
             lines = []
@@ -161,6 +143,9 @@ class Anim:
         data += utils.intToList(len(rawAnim))
         data += utils.intToList(imgSize)
         data += utils.uShortToList(width)
+        if not useDeprecateCmd:
+            data += [fmt]
+            data += utils.intToList(compressedSize)
         cmds = [self.com.formatFrame(0x95, data)]
 
         ## pack data in commands
@@ -176,21 +161,19 @@ class Anim:
         return cmds
     
     ## prepare command for animation saving
-    def formatCmdFolder(self, id, folder):
+    def getCmdFolder(self, id, folder, fmt = imgFmt.MONO_4BPP, useDeprecateCmd = False):
         ## list file in folder
         imgs = []
-        for f in os.listdir(folder):
+        for f in sorted(os.listdir(folder)):
             path = os.path.join(folder, f)
             if os.path.isfile(path):
                 img = cv2.imread(path)
-                img = cv2.rotate(img, cv2.ROTATE_180)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                 imgs.append(img)
 
-        return self.formatCmd(id, imgs)
+        return self.getCmd(id, imgs, fmt, useDeprecateCmd)
 
     ## prepare command for animation saving
-    def formatCmdGif(self, id, gif, invertColor):
+    def getCmdGif(self, id, gif, invertColor, fmt = imgFmt.MONO_4BPP):
 
         cap = cv2.VideoCapture(gif)
 
@@ -199,9 +182,6 @@ class Anim:
             ret, frame = cap.read()
             if not ret:
                 break
-
-            frame = cv2.rotate(frame, cv2.ROTATE_180)
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
             if invertColor:
                 ## invert color
@@ -212,12 +192,12 @@ class Anim:
 
         cap.release()
 
-        return self.formatCmd(id, imgs)
-    
+        return self.getCmd(id, imgs, fmt)
+
     ## save an animation, takes all images of a folder
-    def saveAnimation(self, id, folder = "anim/cube-302x256"):
+    def saveAnimation(self, id, folder = "anim/cube-302x256", fmt = imgFmt.MONO_4BPP, useDeprecateCmd = False):
         ## convert image
-        cmds = self.formatCmdFolder(id, folder)
+        cmds = self.getCmdFolder(id, folder, fmt, useDeprecateCmd)
 
         ## send commands
         for c in cmds:
@@ -228,9 +208,9 @@ class Anim:
         return True
     
     ## save an animation from a gif
-    def saveAnimationGif(self, id, gif = "anim/monkey-228x228.gif", invertColor = True):
+    def saveAnimationGif(self, id, gif = "anim/monkey-228x228.gif", invertColor = True, fmt = imgFmt.MONO_4BPP):
         ## convert image
-        cmds = self.formatCmdGif(id, gif, invertColor)
+        cmds = self.getCmdGif(id, gif, invertColor, fmt)
 
         ## send commands
         for c in cmds:

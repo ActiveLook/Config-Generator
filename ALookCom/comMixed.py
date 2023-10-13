@@ -3,14 +3,13 @@
 ## data sent on USB are in ascii format
 ## -------------------------------------------------------
 
-import struct
 from time import sleep
 
 import serial.tools.list_ports
 import serial
 
-import utils
-from com import Com
+from . import utils
+from .com import Com
 
 class ComMixed(Com):
     ## constructor
@@ -58,7 +57,7 @@ class ComMixed(Com):
             dataIdx = 5
         
         if frameLen != len(bin):
-            self.printFrameError("wrong len, read : {} received : {}".format(frameLen, len(bin)), frame)
+            self.printFrameError(f"wrong len, read : {frameLen} received : {len(bin)}", frame)
             return {'ret': False, 'cmdId': cmdId, 'data': 0}
 
         ## data
@@ -87,7 +86,7 @@ class ComMixed(Com):
             ret = True
 
         if ret:
-            print("async data: {}".format(str))
+            print(f"async data: {str}")
 
         return ret
     
@@ -116,8 +115,8 @@ class ComMixed(Com):
         self.__ser.close()
     
     ##
-    def sendFrame(self, cmdId, data):
-        frame = self.formatFrame(cmdId, data)
+    def sendFrame(self, cmdId, data, queryId=[]):
+        frame = self.formatFrame(cmdId, data, queryId)
         self.__sendData(frame)
 
     ## return : {'ret', 'cmdId', 'data'}
@@ -128,7 +127,7 @@ class ComMixed(Com):
         res = self.__decodFrame(line)
 
         if res['cmdId'] != cmdId:
-            print("receiveFrame receive cmdId ({:02x}) don't match expected cmdId ({:02x})".format(res['cmdId'], cmdId))
+            print(f"receiveFrame receive cmdId ({res['cmdId']:02x}) don't match expected cmdId ({cmdId:02x})")
             return False
 
         self.printFrame("Rcv Frame", res['rawFrame'])

@@ -44,7 +44,8 @@
 
     "imgs": [
         {"id": 1, "path": "./cfgDescriptor/demo/img/1_Chrono46x46.bmp"},
-        {"id": 12, "path": "./cfgDescriptor/demo/img/12_Calories46x46.bmp"}
+        {"id": 12, "path": "./cfgDescriptor/demo/img/12_Calories46x46.bmp"},
+        {"id": 13, "path": "./cfgDescriptor/demo/img/logo-alpha.png", "fmt": "mono_alpha_8bpp"}
     ],
 
     "anim": [

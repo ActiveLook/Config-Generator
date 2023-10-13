@@ -27,17 +27,16 @@ Your graphic configuration may be uploaded on your eyewear through USB cable, or
 
 ## First use
 
-* (if available): Connect your glasses to your computer with a USB cable.
+* Connect your glasses to your computer with a USB cable.
 * Open a terminal and type `python configGenerator.py`
-
 * Choose between :
   * `1 - Save in file`
     * Convert a config to a binary
-    * You can then load this config file to the eyewear through the Demo Application and/or SDK.
+    * You can use this file to load config to the glasses with the SDK
   * `2 - USB live test`
-    * Directly load a config into your eyewear (if USB connector is available).
+    * Directly load a config into glasses
 
-## Build your own ActiveLook Configuration
+## Do your own ActiveLook Configuration
 
 * Create a folder with the name of your config inside the `cfgDescriptor` folder.
   * You can duplicate the `demo` folder, it will be a way much easier
@@ -82,9 +81,9 @@ Your graphic configuration may be uploaded on your eyewear through USB cable, or
     * pages
       * WIP
 
-## a few hints
+## Some advice
 
-* Think ‘AR’: What is black will become transparent on your display. So consider drawing using white on a black background. More recommandations here : https://www.activelook.net/news-blog/developing-with-activelook-getting-started 
+* To have the best contrast, we advise you to do white images on a black background
 * The bigger is your configuration, the longer it will take to load
 * Crop you image
 * The id's will be used when display commands will be sent, so choose them wisely, don't duplicate them

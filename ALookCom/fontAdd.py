@@ -1,317 +1,329 @@
-import string
-import numpy as np
+import math
 
+import numpy as np
 
 from PIL import Image
 from PIL import ImageFont
 from PIL import ImageDraw
 
-import utils
+from . import utils
 
-def char_to_pixels(text, size, path):
-    font = ImageFont.truetype(path, size) 
-    w, h = font.getsize(text)  
-    ## ascii letters are more spaced than other caracters
-    if text in string.ascii_letters:
-        w += 1
-    ##
-    image = Image.new('L', (w, h), 1)  
-    draw = ImageDraw.Draw(image)
-    draw.text((0, 0), text, font=font) 
-    arr = np.asarray(image)
-    arr = np.where(arr, 0, 1)
 
-    ## remove the columns of 0 in the left side
-    indUn = len(arr[0])
-    for l in arr:
-        for i in range(len(l)):
-            if l[i] == 1:
-                if i < indUn:
-                    indUn = i
-    cropArr = np.zeros((len(arr), len(arr[0])-indUn))
-    for i,l in enumerate(arr):
-            cropArr[i] = l[indUn:]
+## char width cropping
+def char_width_cropping(arr, newWidth):
+    width = len(arr[0])
+    height = len(arr)
+    
+    if width < newWidth:
+        ## add missing column
+        missing = newWidth - width
+        cropArr = np.zeros((height, width + missing))
+        for i, line in enumerate(arr):
+            cropArr[i][ : width] = line
+    elif width > newWidth:
+        ## get the width of empty column on left and right side
+        leftZero = width
+        rightZero = width
+        for line in arr:
+            ## get number length of black pixel on the left
+            for i, pxl in enumerate(line):
+                if pxl != 0:
+                    if i < leftZero:
+                        leftZero = i
+            ## get number length of black pixel on the right
+            for i, pxl in enumerate(reversed(line)):
+                if pxl != 0:
+                    if i < rightZero:
+                        rightZero = i
 
-    ## cropping the image to sue with the good height
-    if text == " ":
-        cropArr = np.array([[0 for _ in range(len(arr[0]))]])
+        ## compute the number of croped columns needed on left and right side
+        left = width - newWidth
+        right = 0
+
+        ## adjust cropping with empty column
+        if left > leftZero:
+            right += left - leftZero
+            left = leftZero
+        if right > rightZero:
+            right = rightZero
+    
+        ## crop the array
+        cropArr = np.zeros((height, width - left - right))
+        for i, line in enumerate(arr):
+            cropArr[i] = line[left : width - right]
     else:
-        while not(1 in cropArr[-1]):
-            cropArr = cropArr[:-1]
+        cropArr = arr
 
-    ## adjust top cropping 
-    n = getcrop("L", size, path)
-    for _ in range(n):
-        cropArr = cropArr[1:]
- 
-    h, w = cropArr.shape
     return cropArr
 
 
-def getcrop(text, size, path):
-    ## get top cropping with linear approx with size of font
-    font = ImageFont.truetype(path, size) 
-    w, h = font.getsize(text)  
-    if text in string.ascii_letters:
-        w += 1
-    image = Image.new('L', (w, h), 1)  
-    draw = ImageDraw.Draw(image)
-    draw.text((0, 0), text, font=font) 
-    arr = np.asarray(image)
-    arr = np.where(arr, 0, 1)
-    ind0 = 0
-    for i,l in enumerate(arr):
-        if (1 in l):
-            ind0 = i
-            break
-    return ind0 - (2 + int(size/40))
+## char height croping
+## descent is the distance between basline and bottom
+def char_baseline_cropping(arr, newHeight, descent, newDescent):
+    width = len(arr[0])
+
+    ## adjust baseline
+    if descent < newDescent:
+        ## add blank lines
+        nb = newDescent - descent
+        for _ in range(nb):
+            arr = [0 for _ in range(width)] + arr
+    elif descent > newDescent:
+        ## remove blank lines
+        nb = descent - newDescent
+
+        ## get the number of line with only black pixels
+        for i, line in enumerate(arr):
+            nbBlank = i
+            if nbBlank == nb:
+                break
+            if 1 in line:
+                break
+        if nbBlank > 0:
+            arr = arr[nbBlank:]
+
+    ## adjust height
+    height = len(arr)
+    if height < newHeight:
+        ## add blank lines on top
+        nb = newHeight - height
+
+        row = [0 for _ in range(width)]
+        for _ in range(nb):
+            arr = np.append(arr, [row], axis=0)
+    elif height > newHeight:
+        ## remove blank top lines to match height
+        nb = height - newHeight
+
+        ## get the number of line with only black pixels
+        for i, line in enumerate(np.flipud(arr)):
+            nbBlank = i
+            if nbBlank == nb:
+                break
+            if 1 in line:
+                break
+        
+        if nbBlank > 0:
+            arr = arr[:-nbBlank]
+    
+    return arr
 
 
+## convert a char into a matrix of pixels
+## char width can be forced
+## baseline position is in percent of height
+def char_to_pixels(char, height, path, width=-1, baseline=0.25):
+    used_height = height
+    newDescent = math.floor(height * baseline)
 
+    ## while char is too big try with lower height
+    while True:
+        font = ImageFont.truetype(path, used_height)
+        ascent, descent = font.getmetrics()   ## distance between baseline and top/bottom
+        _, _, w, h = font.getbbox(char)
+
+        ## create matrix
+        ## mode 'L': 8-bit pixels, black and white
+        image = Image.new('L', (w, h), 1)
+        draw = ImageDraw.Draw(image)
+        draw.text((0, 0), char, font=font)
+        arr = np.asarray(image)
+        arr = np.where(arr, 0, 1)
+
+        ## width cropping
+        if width > 0:
+            arr = char_width_cropping(arr, width)
+
+        ## height cropping
+        arr = char_baseline_cropping(arr, height, descent, newDescent)
+
+        if len(arr) == height:
+            if width == -1 or len(arr[0]) == width:
+                break
+        
+        ## if char is too big try with a lower height
+        used_height -= 1
+
+    return arr
+
+
+## return a 1 byte encoding
 def write1byte(nb0, nb1):
-    return(nb0*2**4 + nb1)
+    return (nb0 << 4) + nb1
 
 
-def write2bytes(car, nb):
-    l = []
-    if car == 1:
-        offset = 128
-    else :
-        offset = 0
-    nbboucle = nb // 1016
-    nbrem = nb % 1016
-    ## writing 00
-    for i in range(nbboucle):
-        l.append(0)
-        l.append(127 + offset)
-    nbDouble = nbrem // 8
-    nbDoubleRem = nbrem % 8
-    if nbDouble != 0:
-        l.append(0)
-        l.append(nbDouble + offset)
-    return(l, nbDoubleRem)
+## write mutltiple sequences of 2 bytes encoding
+def write2bytes(pxl, nb):
+    out = []
+
+    ## pixel On/Off is encoded on the 8th bit
+    if pxl == 1:
+        pxlState = 0x80
+    else:
+        pxlState = 0
+
+    ## bits 7 to 1 is the number of pixel multiply by 8
+    nbLoop = nb // (0x7F * 8)
+    rem = nb % (0x7F * 8)
+
+    ## writing sequences of 1016 pixels (0x7F * 8)
+    for _ in range(nbLoop):
+        ## on 2 bytes encoding, the first byte is always 0
+        out.append(0x00)
+        out.append(pxlState | 0x7F)
+
+    nbPixels = rem // 8
+    rem = rem % 8
+    if nbPixels != 0:
+        ## on 2 bytes encoding, the first byte is always 0
+        out.append(0x00)
+        out.append(pxlState | nbPixels)
+
+    return (out, rem)
+
+## write multiple pixels sequences with 1 and 2 bytes encoding
+def writeRle(nb0, nb1):
+    out = []
+
+    ## In Fw, Off pixels are displayed first
+    ## so write them first
+    while nb0 > 0:
+        if nb0 <= 15:
+            ## 1 byte encoding
+            tmpOn = min(nb1, 15)
+            out.append(write1byte(nb0, tmpOn))
+            nb0 = 0
+            nb1 -= tmpOn
+        elif nb0 <= 30:
+            ## even here 1 byte is still more efficient
+            out.append(write1byte(15, 0))
+            nb0 -= 15
+        else:
+            ## 2 bytes encoding
+            lst, rem = write2bytes(0, nb0)
+            out += lst
+            nb0 = rem
+    
+    while nb1 > 0:
+        if nb1 <= 15:
+            ## 1 byte encoding
+            out.append(write1byte(0, nb1))
+            nb1 = 0
+        elif nb1 <= 30:
+            ## even here 1 byte is still more efficient
+            out.append(write1byte(0, 15))
+            nb1 -= 15
+        else:
+            ## 2 bytes encoding
+            lst, rem = write2bytes(1, nb1)
+            out += lst
+            nb1 = rem
+
+    return out
 
 
-def pixel_to_rle(arr, height):
+## encod a matrix of pixel into ActiveLook format
+def pixel_to_rle(arr):
     h, w = arr.shape
-    arr  = arr.reshape(-1)
-
-    ## adding off lines to sue with size
-    for k in range(height-h):
-        arr =  list(arr) + [0 for k in range(w)]
-    lhex = []
-    lg = len(arr)
-    i = 0
-    car = int(arr[i])
+    arr = arr.reshape(-1) ## reshape matrix on 1 dimension
 
     ## cpt01 [number of on pixels, number of off pixels]
-    cpt01 = [0, 0]
-    cpt01[car] += 1
-    prev = car
-    i += 1
-    while (i<lg):
-        car = int(arr[i])
-
-        ## while pixels are repeated, just increment cpt01[pixel]
-        if car == prev:
-            cpt01[car] += 1
-            prev = car
-        else:
-            ## switch 0 -> 1
-            if car == 1:
-                ## not enough pixels for 2 bytes encoding
-                if cpt01[0] < 16:
-                    pass
-                elif cpt01[0] <= 30:
-                    nb0 = cpt01[0]
-                    lhex.append(write1byte(15, 0))
-                    cpt01[0] = nb0 - 15
-                ## 2 bytes encoding
-                else:
-                    nb0 = cpt01[0]
-                    l, nbRem = write2bytes(0, nb0)
-                    lhex = lhex + l
-                    ## pixels not encoded yet
-                    cpt01[0] = nbRem
-                cpt01[1] += 1
-            
-            ##switch 1 -> 0
-            else:
-                ## not enough pixels for 2 bytes encoding
-                if cpt01[1] < 16:
-                    lhex.append(write1byte(cpt01[0], cpt01[1]))
-                ## 2 bytes encoding
-                else:
-                    nb1 = cpt01[1] - 15
-                    lhex.append(write1byte(cpt01[0], 15))
-                    l, nbRem = write2bytes(1, nb1)                    
-                    lhex = lhex + l
-                    ## encoding on pixels missing
-                    if nbRem != 0:
-                        lhex.append(nbRem)
-                cpt01 = [1,0]
-        prev = car        
-        i+=1
+    prev = int(arr[0])
+    cnt01 = [0, 0]
+    out = []
+    for pxl in arr:
+        pxl = int(pxl)  ## pixel are float
+        if pxl != prev:
+            ## while pixels are repeated, just increment cpt01[pixel]
+            ## In Fw, Off pixels are displayed first
+            ## so write memory when switching On to Off
+            if pxl == 0:
+                out += writeRle(cnt01[0], cnt01[1])
+                cnt01 = [0, 0]
+        cnt01[pxl] += 1
+        prev = pxl
 
     ## encoding last pixels
-    if (cpt01[0] < 15 and cpt01[1] <15):     
-        lhex.append(write1byte(cpt01[0], cpt01[1]))
-    else:
-        if cpt01[1] >15:
-            car = 1
-            lhex.append(write1byte(cpt01[0], 15))
-            nb = cpt01[1] - 15
-        else:
-            car = 0
-            nb = cpt01[0]
-        l, nbRem = write2bytes(car,nb)                    
-        lhex = lhex + l
-        if nbRem != 0:
-            if car == 1:
-                lhex.append(write1byte(0, nbRem))
-            else:
-                lhex.append(write1byte(nbRem, 0))
-    ## adding char headers
-    lhex = [0, w] + lhex
-    lhex[0] = len(lhex)
-    return(lhex)
+    if cnt01[0] > 0 or cnt01[1] > 0:
+        out += writeRle(cnt01[0], cnt01[1])
+
+    ## adding char header
+    out = [0, w] + out
+    out[0] = len(out)
+    assert(out[0] <= 255) # a char must be stored on 255 bytes maximum
+    
+    return out
 
 
-## encoding without 2bytes encoding
-def pixel_to_rle_no_00(arr, height):
-    h, w = arr.shape
-    arr  = arr.reshape(-1)
-    for k in range(height-h):
-        arr = [0 for k in range(w)] + list(arr)
-    listhex = []
-    lg = len(arr)
-    ltot = []
-    cpt = 1
-    cptbytes = [0, 0]
-    car = arr[0]
-    cpt01 = [0,0]
-    if car == 0:
-        cptbytes[0] += 1
-        cpt01[0]+=1
-    else:
-        cptbytes[1] += 1
-        cpt01[1]+=1
-        ltot.append([cpt01[0],cpt01[1]])
-        cpt01 = [0,0]
-        cptbytes = [0,0]
-    cpt = 1
-    while cpt < lg:
-        zer = cptbytes[0]
-        uno = cptbytes[1]
-        if (zer < 15) and (uno < 15):
-            curcar = arr[cpt]
-            if curcar == 0 and car == 0:
-                cptbytes[0] += 1
-                cpt01[0]+=1
-            elif curcar == 0 and car == 1:
-                cptbytes[0] += 1
-                ltot.append([cpt01[0], cpt01[1]])
-                cpt01 = [1,0]
-                cptbytes = [1,0]
-                car = 0
-            else:
-                cptbytes[1] += 1
-                cpt01[1] +=1
-                car = curcar
-            cpt +=1
-        else:
-            ltot.append([cpt01[0], cpt01[1]])
-            cpt01 = [0,0]
-            cptbytes = [0,0]
-            car = 0
-    ltot.append([cpt01[0], cpt01[1]])
-    listhex = []
-    for (one, zero) in ltot:
-        listhex.append(one*2**4 + zero)
-    listhex = [0, w] + listhex
-    listhex[0] = len(listhex)
-    return listhex
-
-
-
+## convert ActiveLook encoding to pixel matrix
 def rle_to_matrix(arr, height):
-    line = []
-    go = False
     w = arr[1]
+
+    pixels = []
+    go = False
     for elem in arr[2:]:
         if elem == 0:
+            ## 2 bytes encoding
+            ## 1st byte is always 0
             go = True
         elif go == True:
             go = False
-            if elem > 128:
-                for one in range((elem - 128)*8):
-                    line.append(1)
-            else :
-                for zer in range(elem*8):
-                    line.append(0)
+            pxl = elem >> 7          ## 8th bit is the pixel value
+            nb = (elem & 0x7F) * 8   ## 7 to 1 bits are the number of pixel multiply by 8
+            for _ in range(nb):
+                pixels.append(pxl)
         else :
-            val0 = elem // 16
-            val1 = elem % 16
-            for zer in range(val0):
-                line.append(0)
-            for un in range(val1):
-                line.append(1)
+            nb0 = elem >> 4
+            nb1 = elem & 0x0F
+            for _ in range(nb0):
+                pixels.append(0)
+            for _ in range(nb1):
+                pixels.append(1)
+
+    ## create matrix
     mat = []
-    for k in range(height):
-        mat.append(line[k*w: (k+1)*w])
-    return(mat)
+    for i in range(height):
+        mat.append(pixels[i * w : (i + 1) * w])
+
+    return mat
 
 
-def getFontData(height, path, first, last, newFormat=True):
-    dataChar = []
-
-    ofirst = ord(first)
-    olast = ord(last)
-
-    lfirst = utils.uShortToList(ofirst)
-    llast = utils.uShortToList(olast)
+## convert a font to the ActiveLook format
+## widthDict, can be use to specify the width of each char with a dictionary
+def getFontData(height, path, firstChar, lastChar, fmt=0x02, widthDict={}, baseline=0.25):
+    oFirst = ord(firstChar)
+    oLast = ord(lastChar)
     
-
-    listcar = []
-    for k in range(ofirst, olast + 1):
-        listcar.append(chr(k))
+    listChar = []
+    for c in range(oFirst, oLast + 1):
+        listChar.append(chr(c))
     
-    if newFormat:
-        size = 6 + len(listcar)*2
-    else:
-        size = 256
-
-    if newFormat:
-        nbnew = 2
-    else:
-        nbnew = 1
-    
-    dataHeaders = [nbnew, height] + lfirst + llast
-    prevoffset = [0x00, 0x00]
-    dataoffset = []
+    header = [fmt, height] + utils.uShortToList(oFirst) + utils.uShortToList(oLast)
+    offsetTable = []
+    charTable = []
     offset = 0
-    for car in listcar:
+    for char in listChar:
         ## char -> pixel matrix
-        arrPixel = char_to_pixels(car , height ,path)
+        if char in widthDict:
+            width = widthDict[char]
+        else:
+            width = -1
+        arrPixel = char_to_pixels(char, height, path, width, baseline)
         
         ## pixel matrix -> rle encoding
-        arrHex = pixel_to_rle(arrPixel, height)        
-        ##calculating size for first header
-        size = size + len(arrHex)
+        arrRle = pixel_to_rle(arrPixel)
 
-        ##calculating offset
-        offset = offset + len(arrHex)
-
-        dataChar = dataChar + arrHex
-        dataoffset = dataoffset + prevoffset
+        charTable += arrRle
+        offsetTable += utils.sShortToList(offset)
         
-        prevoffset = utils.sShortToList(offset)
-    nbcar = len(listcar)
+        ## calculating  next offset
+        offset += len(arrRle)
 
-    if newFormat:
-        data = dataHeaders  + dataoffset + dataChar
-    else:
-        data = dataHeaders + dataoffset + [0x00 for k in range(2*(125-nbcar))] + dataChar
+    if fmt == 0x01:
+        ## format 0x01, add 0 in offset table to reach a size of 250 bytes
+        nbChar = len(listChar)
+        offsetTable += [0x00 for _ in range(2 * (125 - nbChar))]
+    
+    data = header + offsetTable + charTable
 
-    return data, size
-
+    return data

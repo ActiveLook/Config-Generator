@@ -4,12 +4,17 @@ import sys
 import numpy
 
 import cv2
+from PIL import Image
+from PIL import ImageDraw
 
-import CohenSutherlandLc
-import display
-import fontAdd
-import fontData
-import fontSize
+from . import CohenSutherlandLc
+from . import imgFmt
+from . import imgMdp08
+from . import imgMdp05
+from . import display
+from . import fontAdd
+from . import fontData
+from . import fontSize
 
 
 ## convert a unsigned short in a int list
@@ -29,6 +34,12 @@ def sShortToList(value):
 def intToList(value):
     bt = value.to_bytes(length=4, byteorder='big')
     return [bt[0], bt[1], bt[2], bt[3]]
+
+## convert list to signed char
+## return : list
+def listToSChar(lst):
+    bin = bytearray(lst)
+    return struct.unpack('>b', bin)[0] ## '>b' = signed char
 
 ## convert list to unsigned short
 ## return : list
@@ -79,10 +90,15 @@ def listToStr(lst, len = -1):
 def clamp(n, minn, maxn):
         return max(min(maxn, n), minn)
 
-## convert serial number to ble address
-def getBleAddress(versYear, versWeek, versNumber):
+## convert serial number to ble public address
+def getBlePublicAddress(versYear, versWeek, versNumber):
     bt = versNumber.to_bytes(length=3, byteorder=sys.byteorder, signed=False)
-    return "80:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}".format(versYear, versWeek, bt[2], bt[1], bt[0])
+    return f"80:{versYear:02X}:{versWeek:02X}:{bt[2]:02X}:{bt[1]:02X}:{bt[0]:02X}"
+
+## convert serial number to ble private address
+def getBlePrivateAddress(versYear, versWeek, versNumber):
+    bt = versNumber.to_bytes(length=3, byteorder=sys.byteorder, signed=False)
+    return f"C0:{versYear:02X}:{versWeek:02X}:{bt[2]:02X}:{bt[1]:02X}:{bt[0]:02X}"
 
 ## get number of pixel of a point
 def getPointNbPixel(x, y, clippingX0, clippingY0, clippingX1, clippingY1):
@@ -145,7 +161,6 @@ def getRectFullNbPixel(x0, y0, x1, y1, clippingX0, clippingY0, clippingX1, clipp
     clippingX1 = clamp(clippingX1, 0, display.WIDTH-1)
     clippingY1 = clamp(clippingY1, 0, display.HEIGHT-1)
     pxl = 0
-    nbLine = 0
 
     if (x0 > clippingX1 and x1 > clippingX1) or (x1 < clippingX0 and x0 < clippingX0) or (y0 > clippingY1 and y1 > clippingY1) or (y0 < clippingY0 and y1 < clippingY0):
         return 0
@@ -351,18 +366,75 @@ def getPolyNbPixels(lvalues, clippingX0, clippingY0, clippingX1, clippingY1):
         passed.append([[x0, y0], [x1, y1]])
     return pxl
 
-def getNbPixelImg(path, x, y, clippingX0, clippingY0, clippingX1, clippingY1, bpp):
-    """get pixel count  for grayscale image in 4bpp or 1bpp"""
+def getThickPolyNbPixels(lvalues, thickness, layoutX0, layoutY0, 
+                         clippingX0, clippingY0, clippingX1, clippingY1, image=None):
+    """ get the number of pixels that compose the polyline
+        As it is more difficult to count pixel number with thick lines, we draw the line in an array and 
+        count the number of pixel in the clipping area"""
     clippingX0 = clamp(clippingX0, 0, display.WIDTH-1)
     clippingY0 = clamp(clippingY0, 0, display.HEIGHT-1)
     clippingX1 = clamp(clippingX1, 0, display.WIDTH-1)
     clippingY1 = clamp(clippingY1, 0, display.HEIGHT-1)
-    assert bpp in [1, 4], "not yet implemented"
-    img = cv2.imread(path)
-    img2 = cv2.rotate(img, cv2.ROTATE_180) 
-    gray = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
-    height = gray.shape[0]
-    width = gray.shape[1]
+
+    if image==None:
+        image = Image.new('L', (display.WIDTH, display.HEIGHT), 0)  
+    draw = ImageDraw.Draw(image)
+
+    ## from points get segments
+    lseg = [[lvalues[i], lvalues[i+1]] for i in range(len(lvalues)-1)]
+
+    ## Draw lines
+    for [[x0, y0], [x1, y1]] in lseg:         
+        draw.line([(layoutX0+x0, layoutY0+y0), (layoutX0+x1, layoutY0+y1)], fill=1, width=thickness)
+
+    # Clip image
+    clipped = image.crop([clippingX0, clippingY0, clippingX1+1, clippingY1+1])
+
+    ## Count pixel in the clipping region 
+    count = numpy.count_nonzero(numpy.asarray(clipped))
+
+    # Return new image storing all display
+    new_image = Image.new('L', (display.WIDTH, display.HEIGHT), 0)  
+    new_image.paste(clipped, [clippingX0, clippingY0])
+
+    return count, new_image
+    
+def getNbPixelImg(path, x, y, clippingX0, clippingY0, clippingX1, clippingY1, fmt):
+    """get pixel count for grayscale image in 4bpp or 1bpp"""
+    clippingX0 = clamp(clippingX0, 0, display.WIDTH-1)
+    clippingY0 = clamp(clippingY0, 0, display.HEIGHT-1)
+    clippingX1 = clamp(clippingX1, 0, display.WIDTH-1)
+    clippingY1 = clamp(clippingY1, 0, display.HEIGHT-1)
+
+    if (fmt == imgFmt.MONOALPHA_8BPP):
+        ## alpha channel is kept to use transparency
+        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    else:
+        ## alpha channel is cropped
+        img = cv2.imread(path) 
+    if fmt == imgFmt.MONO_4BPP:
+        img = imgMdp05.convertDefault(img)
+    elif fmt == imgFmt.MONO_4BPP_HEATSHRINK:
+        img = imgMdp05.convertDefault(img)
+    elif fmt == imgFmt.MONO_4BPP_HEATSHRINK_SAVE_COMP:
+        img = imgMdp05.convertDefault(img)
+    elif fmt == imgFmt.MONO_1BPP:
+        img = imgMdp05.convert1Bpp(img)
+    elif fmt == imgFmt.STREAM_1BPP:
+        img = imgMdp05.convert1Bpp(img)
+    elif fmt == imgFmt.STREAM_4BPP_HEATSHRINK:
+        img = imgMdp05.convertDefault(img)
+    elif fmt == imgFmt.RYYG:
+        img = imgMdp08.convertViaDistanceToRyyg(img)
+    elif fmt == imgFmt.RRYG:
+        img = imgMdp08.convertViaDistanceToRryg(img)
+    elif fmt == imgFmt.MONOALPHA_8BPP:
+        img = imgMdp05.convert8Bpp(img)
+    else:
+        assert False, "Unknown format"
+    
+    height = img.shape[0]
+    width = img.shape[1]
     
     x2 = x + width
     y2 = y + height 
@@ -370,35 +442,63 @@ def getNbPixelImg(path, x, y, clippingX0, clippingY0, clippingX1, clippingY1, bp
     if x > clippingX1 or x2 < clippingX0 or y > clippingY1 or y2 < clippingY0:
         return 0, width, height
 
-
     myX0 = clamp(x, clippingX0, clippingX1)
     myY0 = clamp(y, clippingY0, clippingY1)
     myX1 = clamp(x2, clippingX0, clippingX1)
     myY1 = clamp(y2, clippingY0, clippingY1)
 
-    cropGray = gray[myY0-y: myY1-y+1, myX0-x: myX1-x+1]
+
+    cropImg = img[myY0-y: myY1-y+1, myX0-x: myX1-x+1]
     count = 0
-    for lines in cropGray:
+    for lines in cropImg:
         for pixel in lines:
-            if bpp == 4:
-                pixel = round(pixel / 17)
-            elif bpp == 1:
-                if pixel != 0:
-                    pixel = 1
-            
-            if pixel > 0:
-                count += 1
+            if fmt == imgFmt.MONOALPHA_8BPP:
+                count += int(pixel%16 and pixel>15)
+            else:
+                count += int(pixel > 0)
     return count, width, height
 
+
+def getPixelsTransparencyOverlay(path1, path2, x1, y1, x2, y2):
+    '''takes 2 image paths 
+    displays the first at x1,y1 and the second at x2,y2 
+    then returns the pixel values, and the number of pixels that should be on the display taking the transparency into account
+    also returns the width and height of the total overlay of the 2 images'''
+    
+    img1 = cv2.imread(path1, cv2.IMREAD_UNCHANGED)
+    img1 = cv2.rotate(img1, cv2.ROTATE_180)
+    img1 = imgMdp05.convert8Bpp(img1)
+    img2 = cv2.imread(path2, cv2.IMREAD_UNCHANGED)
+    img2 = cv2.rotate(img2, cv2.ROTATE_180)
+    img2 = imgMdp05.convert8Bpp(img2)
+    
+    computed_display_screen = numpy.zeros((display.HEIGHT, display.WIDTH))
+    for i in range(height1 := min(img1.shape[0], display.HEIGHT - x1)):
+        for j in range(width1 := min(img1.shape[1], display.WIDTH - y1)):
+            color = img1[i, j]//16
+            alpha = (img1[i,j]%16)
+            computed_display_screen[i + x1, j + y1] = color*alpha//15
+    for i in range(height2 := min(img2.shape[0], display.HEIGHT - x2)):
+        for j in range(width2 := min(img2.shape[1], display.WIDTH - y2)):
+            color = img2[i,j]//16
+            alpha = img2[i,j]%16
+            anti_alpha = 15 - alpha
+            computed_display_screen[i + x2, j + y2] = (computed_display_screen[i + x2, j + y2]*anti_alpha + color*alpha)//15
+
+    max_width = max(x1 + width1, x2 + width2) - min(x1,x2)
+    max_height = max(y1 + height1, y2 + height2) - min(y1,y2)
+    return computed_display_screen, numpy.count_nonzero(computed_display_screen), max_width, max_height
+
+
 ## get number of pixel of each images in the folder
-def getNbPixelAnim(folder, x, y, clippingX0, clippingY0, clippingX1, clippingY1):
+def getNbPixelAnim(folder, x, y, clippingX0, clippingY0, clippingX1, clippingY1, fmt = imgFmt.MONO_4BPP):
     imgs = []
     
     ## for each file in folder
-    for f in os.listdir(folder):
+    for f in sorted(os.listdir(folder)):
         path = os.path.join(folder, f)
         if os.path.isfile(path):
-            count, width, height = getNbPixelImg(path, x, y, clippingX0, clippingY0, clippingX1, clippingY1, 4)
+            count, width, height = getNbPixelImg(path, x, y, clippingX0, clippingY0, clippingX1, clippingY1, fmt)
             imgs.append({'count': count, 'width': width, 'height': height})
     
     return imgs

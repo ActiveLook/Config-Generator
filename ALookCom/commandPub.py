@@ -1,15 +1,15 @@
 import struct
 
-from command import Command
-import utils
-import fontAdd
+from .command import Command
+from . import utils
+from . import fontAdd
 
 import numpy as np
 
 class CommandPub(Command):
 
     def __init__(self, com):
-        Command.__init__(self, com) 
+        Command.__init__(self, com)
 
     ## set the power of display and initialize display
     def powerDisplayOn(self):
@@ -41,20 +41,6 @@ class CommandPub(Command):
         self._Command__com.sendFrame(0x03, data)
         return self._Command__com.receiveAck()
 
-    ## Set timer duration
-    def setTimers(self, id, duration):
-        data = [id]
-
-        ## Since Fw 4.0.1, duration can be sent on 2 or 4 bytes
-        if duration <= 65535:
-            data += utils.uShortToList(duration)
-        else:
-            data += utils.intToList(duration)
-        
-        self._Command__com.sendFrame(0x04, data)
-        return self._Command__com.receiveAck()
-
-
     ## Return the battery level on the bas service
     def battery(self):
         cmdId = 0x05
@@ -62,29 +48,28 @@ class CommandPub(Command):
         data = []
         self._Command__com.sendFrame(cmdId, data)
 
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return {'ret': False, 'battery': 0}
+            return (False, 0)
 
         data = rcv['data']
 
         ## decod data
         battLevel = data[0]
 
-        print("{}: {}%".format(name, battLevel))
-        return {'ret': True, 'battery': battLevel}
+        print(f"{name}: {battLevel}%")
+        return (True, battLevel)
 
     ## Get the board ID and firmware version.
     def vers(self):
-        ret = {'ret': False, 'version': [0, 0, 0, 0], 'serial': [0, 0, 0]}
         cmdId = 0x06
         name = self.vers.__name__
         data = []
         self._Command__com.sendFrame(cmdId, data)
 
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, [0, 0, 0, 0], [0, 0, 0])
 
         data = rcv['data']
 
@@ -97,12 +82,11 @@ class CommandPub(Command):
         versWeek = data[5]
         versNumber= (data[6] << 16) | (data[7] << 8) | data[8]
 
-        ret['ret'] = True
-        ret['version'] = [versMajor, versMinor, versPatch, versChar]
-        ret['serial'] = [versYear, versWeek, versNumber]
+        version = [versMajor, versMinor, versPatch, versChar]
+        serial = [versYear, versWeek, versNumber]
 
-        print("{0}: {1}.{2}.{3}{4} {5:02d}{6:02d}{7:06d} ({5:02d}/{6:02d} {7:06d})".format(name, versMajor, versMinor, versPatch, chr(versChar), versYear, versWeek, versNumber))
-        return ret
+        print(f"{name}: {versMajor}.{versMinor}.{versPatch}{chr(versChar)} {versYear:02d}{versWeek:02d}{versNumber:06d} ({versYear:02d}/{versWeek:02d} {versNumber:06d})")
+        return (True, version, serial)
 
     ## Activate/deactivate green led: 0 = OFF, 1 = ON, 2 = toggle
     def led(self, mode):
@@ -112,8 +96,6 @@ class CommandPub(Command):
 
     ## Shift all subsequent displayed object of (x,y) pixels
     def shift(self, x, y):
-        name = self.shift.__name__
-
         x = utils.clamp(x,-128,127)
         y = utils.clamp(y,-128,127)
         data = utils.sShortToList(x)
@@ -123,34 +105,32 @@ class CommandPub(Command):
 
     ## Return the user parameters used (shift, luma, sensor)
     def settings(self):
-        ret = {'ret': False, 'x': 0, 'y': 0, 'luma': 0, 'als': False, 'gesture': False} 
         cmdId = 0x0A
         name = self.settings.__name__
         data = []
         self._Command__com.sendFrame(cmdId, data)
 
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, 0, 0, 0, False, False)
 
         data = rcv['data']
 
         ## decod data
-        ret['ret'] = True
-        ret['x'] = np.byte(data[0])
-        ret['y'] = np.byte(data[1])
-        ret['luma'] = data[2]
+        x = np.byte(data[0])
+        y = np.byte(data[1])
+        luma = data[2]
         if data[3] != 0:
-            ret['als'] = True
+            als = True
         else:
-            ret['als'] = False
+            als = False
         if data[4] != 0:
-            ret['gesture'] = True
+            gesture = True
         else:
-            ret['gesture'] = False
+            gesture = False
 
-        print("{}: x: {}, y: {}, luma: {}, als: {}, gesture: {}".format(name, ret['x'], ret['y'], ret['luma'], ret['als'], ret['gesture']))
-        return ret
+        print(f"{name}: x: {x}, y: {y}, luma: {luma}, als: {als}, gesture: {gesture}")
+        return (True, x, y, luma, als, gesture)
 
     ## set luminance
     def luma(self, luma):
@@ -184,7 +164,7 @@ class CommandPub(Command):
             self._Command__com.sendFrame(0x30, data)
             return self._Command__com.receiveAck()
         else:
-            print('{}: greylevel out of range : 0x00 <= greyLevel <= 0x0F'.format(name))
+            print(f'{name}: greylevel out of range : 0x00 <= greyLevel <= 0x0F')
             return False
 
     ## Set a pixel on at the corresponding coordinates
@@ -247,13 +227,26 @@ class CommandPub(Command):
         return self._Command__com.receiveAck()
 
     ## 	Draw multiples lines at the corresponding coordinates
-    def polyline(self, coords = [[0, 0], [10, 10]]):
+    def polyline(self, coords = [[0, 0], [10, 10]], thickness=1):
         data = []
+        data += [thickness, 0, 0]    # thickness and properties
         for x, y in coords:
             data += utils.sShortToList(x)
             data += utils.sShortToList(y)
 
         self._Command__com.sendFrame(0x38, data)
+        return self._Command__com.receiveAck()
+
+    ## 	Hold display
+    def dispHold(self):
+        data = [0]
+        self._Command__com.sendFrame(0x39, data)
+        return self._Command__com.receiveAck()
+
+    ## 	Flush display
+    def dispFlush(self):
+        data = [1]
+        self._Command__com.sendFrame(0x39, data)
         return self._Command__com.receiveAck()
 
     ##
@@ -262,12 +255,10 @@ class CommandPub(Command):
         name = self.imgListDeprecated.__name__
         data = []
         self._Command__com.sendFrame(cmdId, data)
-
-        retError = {'ret': False, 'img': []} 
         
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return retError
+            return (False, [])
 
         data = rcv['data']
 
@@ -281,10 +272,10 @@ class CommandPub(Command):
             grp = zip(*[iter(listUShort)]*2)
             for y, x in grp:
                 imgData.append([x, y])
-                strImgData += " (x: {}, y: {})".format(x, y)
+                strImgData += f" (x: {x}, y: {y})"
         
-        print("{}: nbBmp {}{}".format(name, len(imgData), strImgData))
-        return {'ret': True, 'img': imgData}
+        print(f"{name}: nbBmp {len(imgData)}{strImgData}")
+        return (True, imgData)
 
     ##
     def imgDisplay(self, id, x, y):
@@ -312,12 +303,10 @@ class CommandPub(Command):
         name = self.imgList.__name__
         data = []
         self._Command__com.sendFrame(cmdId, data)
-
-        retError = {'ret': False, 'img': []} 
         
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return retError
+            return (False, [])
 
         data = rcv['data']
 
@@ -331,12 +320,12 @@ class CommandPub(Command):
             x = utils.listToShort(data[i + 3:i + 5])
 
             imgData.append([id, x, y])
-            strImgData += " (Id: {}, x: {}, y: {})".format(id, x, y)
+            strImgData += f" (Id: {id}, x: {x}, y: {y})"
 
             i += 5
 
-        print("{}: nbImg {}{}".format(name, len(imgData), strImgData))
-        return {'ret': True, 'img': imgData}
+        print(f"{name}: nbImg {len(imgData)}{strImgData}")
+        return (True, imgData)
 
     ## Font functions 
 
@@ -345,12 +334,10 @@ class CommandPub(Command):
         name = self.fontList.__name__
         data = []
         self._Command__com.sendFrame(cmdId, data)
-        rcv = self._Command__rcvAnswer(name, cmdId)
- 
-        retError = {'ret': False, 'font': []} 
+        rcv = self.rcvAnswer(name, cmdId)
         
         if not rcv['ret']:
-            return retError
+            return (False, [])
 
         data = rcv['data']
         
@@ -362,51 +349,55 @@ class CommandPub(Command):
             fontData.append([id, height])
             i +=2
 
-        return {'ret': True, 'font': fontData}
+        return (True, fontData)
 
 
-    def fontSave(self, idfont, height, path, first, last, newFormat=True):
+    def fontSave(self, id, height, path, firstChar, lastChar, newFormat=True, widthDict={}, baseline=0.25):
         cmdId = 0x51
+        if newFormat:
+            fmt = 0x02
+        else:
+            fmt = 0x01
 
-        data, size = fontAdd.getFontData(height, path, first, last, newFormat=True)
+        data = fontAdd.getFontData(height, path, firstChar, lastChar, fmt, widthDict, baseline)
+        size = len(data)
 
-        ##premier chunk init idfont et size
-        name = self.fontList.__name__
-        lsize = utils.uShortToList(size)
-        dataFirstHeader =  [idfont] + lsize
-        self._Command__com.sendFrame(cmdId, dataFirstHeader)
+        ## first chunk init id and size
+        header =  [id] + utils.uShortToList(size)
+        self._Command__com.sendFrame(cmdId, header)
         if not self._Command__com.receiveAck():
             return False
-        sendsize = self._Command__com.getDataSizeMax() - 5
-        quot = len(data) // sendsize
+
+        max = self._Command__com.getDataSizeMax()
         i = 0
-        ## sending final data
-        for k in range(quot):
-            arrfin = data[i:i+sendsize]
-            self._Command__com.sendFrame(cmdId ,arrfin)
+        while size > 0:
+            chunkSize = size
+            if chunkSize > max:
+                chunkSize = max
+            chunck = data[i : i + chunkSize]
+
+            self._Command__com.sendFrame(cmdId, chunck)
             if not self._Command__com.receiveAck():
                 return False
-            i = i+sendsize
-        ## missing data after packeting them
-        arrfin = data[i:]
-        self._Command__com.sendFrame(cmdId ,arrfin)
-        return(self._Command__com.receiveAck())
+            
+            i += chunkSize
+            size -= chunkSize
+
+        return True
 
 
     def fontSelect(self, font):
         cmdId = 0x52
-        name = self.fontList.__name__
         data = [font]
         self._Command__com.sendFrame(cmdId, data)
-        return self._Command__com.receiveAck()       
+        return self._Command__com.receiveAck()
 
 
     def fontDelete(self, font):
         cmdId = 0x53
-        name = self.fontList.__name__
         data = [font]
         self._Command__com.sendFrame(cmdId, data)
-        return self._Command__com.receiveAck()       
+        return self._Command__com.receiveAck()
 
 
     ## predefined layout ID
@@ -508,6 +499,14 @@ class CommandPub(Command):
         data += utils.sShortToList(y)
         return data
     
+    def layoutCmdPolyLine(self, points, thickness=1):
+        data = [0x0C]
+        data += [len(points)]
+        data += [thickness, 0, 0]    # thickness and properties
+        for point in points:
+            data += utils.sShortToList(point[0])
+            data += utils.sShortToList(point[1])
+        return data
     
     ## save layout with text only
     ## foreColor: 0 to 0xF
@@ -515,9 +514,9 @@ class CommandPub(Command):
         name = self.layoutSave.__name__
 
         if not 0x00 <= foreColor <= 0x0F:
-                print("{}: foreColor out of range, need to be 0 <= {} <= 15".format(name, foreColor))
+                print(f"{name}: foreColor out of range, need to be 0 <= {foreColor} <= 15")
         if not 0x00 <= backColor <= 0x0F:
-                print("{}: backColor out of range, need to be 0 <= {} <= 15".format(name, backColor))
+                print(f"{name}: backColor out of range, need to be 0 <= {backColor} <= 15")
 
         textValid = 0
         if (usetxt):
@@ -560,17 +559,15 @@ class CommandPub(Command):
         cmdId = 0x64
         name = self.layoutList.__name__
         self._Command__com.sendFrame(cmdId, [])
-
-        retError = {'ret': False, 'layoutIdx': []} 
         
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return retError
+            return (False, [])
 
-        layoutIdx = rcv['data']
+        ids = rcv['data']
 
-        print("{}: nb {}: {}".format(name, len(layoutIdx), layoutIdx))
-        return {'ret': True, 'layoutIdx': layoutIdx}
+        print(f"{name}: nb {len(ids)}: {ids}")
+        return (True, ids)
 
     ## change layout position
     def layoutPos(self, id, x, y):
@@ -581,11 +578,12 @@ class CommandPub(Command):
         return self._Command__com.receiveAck()
 
     ## display layout
-    def layoutEx(self, id, x, y, str):
+    def layoutEx(self, id, x, y, str, extra_cmd=[]):
         data = [id]
         data += utils.uShortToList(x)
         data += [y]
         data += utils.strToList(str)
+        data += extra_cmd
         self._Command__com.sendFrame(0x66, data)
         return self._Command__com.receiveAck()
     
@@ -596,41 +594,54 @@ class CommandPub(Command):
         name = self.layoutGet.__name__
         data = [layoutId]
         self._Command__com.sendFrame(cmdId, data)
-        ret = {'ret': False, 'size': 0, 'x': 0, 'y': 0, 'width': 0, 'height': 0, 'foreColor': 0, 'backColor': 0, 'font': 0, 'textValid': 0, 'txtX0': 0, 'txtY0': 0, 'txtRot': 0, 'txtOpacity': 0, 'cmd': []} 
         
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, [])
 
         data = rcv['data']
-        ret['ret'] = True
-        ret['size'] = data[0]
-        ret['x'] = utils.listToUShort(data[1:3])
-        ret['y'] =  data[3]
-        ret['width'] = utils.listToUShort(data[4:6])
-        ret['height'] = data[6]
-        ret['foreColor'] = data[7]
-        ret['backColor'] = data[8]
-        ret['font'] = data[9]
-        ret['textValid'] = data[10]
-        ret['txtX0'] = utils.listToUShort(data[11:13])
-        ret['txtY0'] = data[13]
-        ret['txtRot'] = data[14]
-        ret['txtOpacity'] = data[15]
-        ret['cmd'] = data[16:]
+        size = data[0]
+        x = utils.listToUShort(data[1:3])
+        y =  data[3]
+        width = utils.listToUShort(data[4:6])
+        height = data[6]
+        foreColor = data[7]
+        backColor = data[8]
+        font = data[9]
+        textValid = data[10]
+        txtX0 = utils.listToUShort(data[11:13])
+        txtY0 = data[13]
+        txtRot = data[14]
+        txtOpacity = data[15]
+        cmd = data[16:]
 
-        print("layout #{} x: {}, y: {}, width: {}, height: {}, foreColor: {}, backColor: {}, font: {}, textValid: {}, txtX0: {}, txtY0: {}, txtRot: {}, txtOpacity: {}".format(
-            layoutId, ret['x'], ret['y'], ret['width'], ret['height'], ret['foreColor'], ret['backColor'], ret['font'], ret['textValid'], ret['txtX0'], ret['txtY0'], ret['txtRot'], ret['txtOpacity']
-        ))
+        print(f"layout #{layoutId} x: {x}, y: {y}, width: {width}, height: {height}, foreColor: {foreColor}, backColor: {backColor}, font: {font}, textValid: {textValid}, txtX0: {txtX0}, txtY0: {txtY0}, txtRot: {txtRot}, txtOpacity: {txtOpacity}")
         
-        return ret
+        return (True, size, x, y, width, height, foreColor, backColor, font, textValid, txtX0, txtY0, txtRot, txtOpacity, cmd)
 
-    ## clear a layout at a spicific position
+    ## clear a layout at a specific position
     def layoutClearEx(self, id, x, y):
         data = [id]
         data += utils.uShortToList(x)
         data += [y]
         self._Command__com.sendFrame(0x68, data)
+        return self._Command__com.receiveAck()
+
+    ## clear and display layout
+    def layoutClearAndDisplay(self, id, str):
+        data = [id]
+        data += utils.strToList(str)
+        self._Command__com.sendFrame(0x69, data)
+        return self._Command__com.receiveAck()
+
+    ## display layout
+    def layoutClearAndDisplayEx(self, id, x, y, str, extra_cmd=[]):
+        data = [id]
+        data += utils.uShortToList(x)
+        data += [y]
+        data += utils.strToList(str)
+        data += extra_cmd
+        self._Command__com.sendFrame(0x6A, data)
         return self._Command__com.receiveAck()
 
     ## Display value (in percentage) of the gauge
@@ -659,47 +670,41 @@ class CommandPub(Command):
 
     ##
     def gaugeList(self):
-        ret = {'ret': False, 'ids': []} 
         cmdId = 0x73
         name = self.gaugeList.__name__
         self._Command__com.sendFrame(cmdId, [])
 
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, [])
 
         ids = rcv['data']
 
-        ret['ret'] = True
-        ret['ids'] = ids
-
-        print("{}: {}".format(name, ids))
-        return ret
+        print(f"{name}: {ids}")
+        return (True, ids)
 
     ##
     def gaugeGet(self, id):
-        ret = {'ret': False, 'x': 0, 'y': 0, 'r': 0, 'rIn': 0, 'start': 0, 'end': 0, 'clockWise': False} 
         cmdId = 0x74
         name = self.gaugeGet.__name__
         self._Command__com.sendFrame(cmdId, [id])
 
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, 0,  0, 0, 0, 0, 0, False)
 
         data = rcv['data']
 
-        ret['ret'] = True
-        ret['x'] = utils.listToShort(data[0:2])
-        ret['y'] = utils.listToShort(data[2:4])
-        ret['r'] = utils.listToUShort(data[4:6])
-        ret['rIn'] = utils.listToUShort(data[6:8])
-        ret['start'] = data[8]
-        ret['end'] = data[9]
-        ret['clockWise'] = bool(data[10])
+        x = utils.listToShort(data[0:2])
+        y = utils.listToShort(data[2:4])
+        r = utils.listToUShort(data[4:6])
+        rIn = utils.listToUShort(data[6:8])
+        start = data[8]
+        end = data[9]
+        clockWise = bool(data[10])
 
-        print("{}: #{} x: {}, y: {}, r: {}, rIn: {}, start: {}, end: {}, clockWise: {}".format(name, id, ret['x'], ret['y'], ret['r'], ret['rIn'], ret['start'], ret['end'], ret['clockWise']))
-        return ret
+        print(f"{name}: #{id} x: {x}, y: {y}, r: {r}, rIn: {rIn}, start: {start}, end: {end}, clockWise: {clockWise}")
+        return (True, x, y, r, rIn, start, end, clockWise)
 
     ##
     def pageSave(self, id, layouts = [[0x01, 0, 0]]):
@@ -714,14 +719,13 @@ class CommandPub(Command):
     
     ##
     def pageGet(self, id):
-        ret = {'ret': False, 'id': -1, 'data': []} 
         cmdId = 0x81
         name = self.pageGet.__name__
         self._Command__com.sendFrame(cmdId, [id])
 
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, -1, [])
 
         data = rcv['data']
 
@@ -736,14 +740,10 @@ class CommandPub(Command):
             i += 2
             y = data[i]
             layouts.append([layoutId, x, y])
-            msg += " (id: {}, x: {}, y: {})".format(layoutId, x, y)
+            msg += f" (id: {layoutId}, x: {x}, y: {y})"
 
-        ret['ret'] = True
-        ret['id'] = id
-        ret['data'] = layouts
-
-        print("{}: #{}{}".format(name, id, msg))
-        return ret
+        print(f"{name}: #{id}{msg}")
+        return (True, id, layouts)
 
     ##
     def pageDelete(self, id):
@@ -767,22 +767,26 @@ class CommandPub(Command):
 
     ##
     def pageList(self):
-        ret = {'ret': False, 'ids': []} 
         cmdId = 0x85
         name = self.pageList.__name__
         self._Command__com.sendFrame(cmdId, [])
 
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, [])
 
         ids = rcv['data']
 
-        ret['ret'] = True
-        ret['ids'] = ids
+        print(f"{name}: {ids}")
+        return (True, ids)
 
-        print("{}: {}".format(name, ids))
-        return ret
+    ##
+    def pageClearAndDisplay(self, id, strings = ["1", "2"]):
+        data = [id]
+        for s in strings:
+            data += utils.strToList(s)
+        self._Command__com.sendFrame(0x86, data)
+        return self._Command__com.receiveAck()
 
     ## Delete an animation
     def animDelete(self, id):
@@ -808,22 +812,18 @@ class CommandPub(Command):
 
     ##
     def animList(self):
-        ret = {'ret': False, 'ids': []} 
         cmdId = 0x99
         name = self.animList.__name__
         self._Command__com.sendFrame(cmdId, [])
 
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, [])
 
         ids = rcv['data']
 
-        ret['ret'] = True
-        ret['ids'] = ids
-
-        print("{}: {}".format(name, ids))
-        return ret
+        print(f"{name}: {ids}")
+        return (True, ids)
     
     ## write config ID
     def cfgWriteDeprecated(self, cfgIdx, cfgId, nbBmp, nblayout, nbFont):
@@ -834,28 +834,27 @@ class CommandPub(Command):
         return self._Command__com.receiveAck()
 
     ## read config ID
-    ## return : {'ret', 'cfgIdx', 'cfgId', 'nbBmp', 'nblayout', 'nbFont'}
-    def cfgReadDeprecated(self, cfgIdx):
-        ret = {'ret': False, 'cfgId': 0, 'nbBmp': 0, 'nblayout': 0, 'nbFont': 0}
+    ## return : ('ret', 'cfgIdx', 'cfgId', 'nbBmp', 'nblayout', 'nbFont')
+    def cfgReadDeprecated(self, id):
         cmdId = 0xA2
         name = self.cfgReadDeprecated.__name__
-        data = [cfgIdx]
+        data = [id]
         self._Command__com.sendFrame(cmdId, data)
         
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, 0, 0, 0, 0, 0)
 
         data = rcv['data']
 
         ## decod data
-        cfgId = utils.listToUInt(data[1:5])
+        version = utils.listToUInt(data[1:5])
         nbBmp = data[5]
         nblayout = data[6]
         nbFont = data[7]
 
-        print("{}: idx: {} id: {:x} nbBmp: {} nblayout: {} nbFont {}".format(name, cfgIdx, cfgId, nbBmp, nblayout, nbFont))
-        return {'ret': True, 'cfgIdx': cfgIdx, 'cfgId': cfgId, 'nbBmp': nbBmp, 'nblayout': nblayout, 'nbFont': nbFont}
+        print(f"{name}: id: {id} version: {version:x} nbBmp: {nbBmp} nblayout: {nblayout} nbFont {nbFont}")
+        return (True, id, version, nbBmp, nblayout, nbFont)
 
     ## set config
     def cfgSetDeprecated(self, cfgidx):
@@ -865,71 +864,22 @@ class CommandPub(Command):
 
     ## Get number of pixel activated on display
     def pixelCount(self, verb=True):
-        ret = {'ret': False, 'count': 0}
         cmdId = 0xA5
         name = self.pixelCount.__name__
         data = []
         self._Command__com.sendFrame(cmdId, data)
         
-        rcv = self._Command__rcvAnswer(name, cmdId)
+        rcv = self.rcvAnswer(name, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, 0)
 
         data = rcv['data']
 
         ## decod data
-        ret['ret'] = True
-        ret['count'] = utils.listToUInt(data)
+        count = utils.listToUInt(data)
         if verb:
-            print("{}: {}".format(name, ret['count']))
-        return ret
-
-    ## get battery charging counter
-    def getChargingCounter(self):
-        ret = {'ret': False, 'counter': 0}
-        cmdId = 0xA7
-        name = self.getChargingCounter.__name__
-        data = []
-        self._Command__com.sendFrame(cmdId, data)
-        
-        rcv = self._Command__rcvAnswer(name, cmdId)
-        if not rcv['ret']:
-            return ret
-
-        data = rcv['data']
-
-        ## decod data
-        ret['ret'] = True
-        ret['counter'] = utils.listToUInt(data)
-
-        print("{}: {}".format(name, ret['counter']))
-        return ret
-
-    ## Get total number of charging minute
-    def getChargingTime(self):
-        ret = {'ret': False, 'time': 0}
-        cmdId = 0xA8
-        name = self.getChargingTime.__name__
-        data = []
-        self._Command__com.sendFrame(cmdId, data)
-        
-        rcv = self._Command__rcvAnswer(name, cmdId)
-        if not rcv['ret']:
-            return ret
-
-        data = rcv['data']
-
-        ## decod data
-        ret['ret'] = True
-        ret['time'] = utils.listToUInt(data)
-
-        print("{}: {}".format(name, ret['time']))
-        return ret
-
-    ## Reset charging counter and charging time value in Param
-    def resetChargingParam(self):
-        self._Command__com.sendFrame(0xAA, [])
-        return self._Command__com.receiveAck()
+            print(f"{name}: {count}")
+        return (True, count)
 
     ## Write configuration
     def cfgWrite(self, name, version, password):
@@ -942,31 +892,29 @@ class CommandPub(Command):
     ## Read configuration
     def cfgRead(self, name):
         bak = self._Command__com.getTimeout()
-        self._Command__com.setTimeout(15.0)
+        self._Command__com.setTimeout(self.longTimeout)
 
         cmdId = 0xD1
         funcName = self.cfgRead.__name__
-        ret = {'ret': False, 'version': 0, 'nbImg': 0, 'nbLayout': 0, 'nbFont': 0, 'nbPage': 0, 'nbGauge': 0}
         data = utils.strToList(name, self.CFG_NAME_LEN)
         self._Command__com.sendFrame(cmdId, data)
 
-        rcv = self._Command__rcvAnswer(funcName, cmdId)
+        rcv = self.rcvAnswer(funcName, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, 0, 0, 0, 0, 0, 0)
 
         self._Command__com.setTimeout(bak)
 
-        ret['ret'] = True
-        ret['version'] = utils.listToUInt(rcv['data'][0:4])
-        ret['nbImg'] = rcv['data'][4]
-        ret['nbLayout'] = rcv['data'][5]
-        ret['nbFont'] = rcv['data'][6]
-        ret['nbPage'] = rcv['data'][7]
-        ret['nbGauge'] = rcv['data'][8]
+        version = utils.listToUInt(rcv['data'][0:4])
+        nbImg = rcv['data'][4]
+        nbLayout = rcv['data'][5]
+        nbFont = rcv['data'][6]
+        nbPage = rcv['data'][7]
+        nbGauge = rcv['data'][8]
 
-        print("{}: version: {}, nbImg: {}, nbLayout: {}, nbFont: {}, nbPage: {}, nbGauge: {}".format(funcName, ret['version'], ret['nbImg'], ret['nbLayout'], ret['nbFont'], ret['nbPage'], ret['nbGauge']))
+        print(f"{funcName}: version: {version}, nbImg: {nbImg}, nbLayout: {nbLayout}, nbFont: {nbFont}, nbPage: {nbPage}, nbGauge: {nbGauge}")
         
-        return ret
+        return (True, version, nbImg, nbLayout, nbFont, nbPage, nbGauge)
 
     ## Select the current configuration used to display layouts, images, etc
     def cfgSet(self, name):
@@ -977,21 +925,21 @@ class CommandPub(Command):
     ## List configurations in memory
     def cfgList(self):
         bak = self._Command__com.getTimeout()
-        self._Command__com.setTimeout(15.0)
+        self._Command__com.setTimeout(self.longTimeout)
 
         cmdId = 0xD3
         data = []
         self._Command__com.sendFrame(cmdId, data)
-        ret = {'ret': False, 'cfg': []}
 
-        rcv = self._Command__rcvAnswer(self.cfgList.__name__, cmdId)
+        rcv = self.rcvAnswer(self.cfgList.__name__, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, [])
 
         self._Command__com.setTimeout(bak)
         
         i = 0
         data = rcv['data']
+        lst = []
         while i < len(data):
             cfg = {'name': "", 'size': 0, 'version': 0, 'usgCnt': 0, 'installCnt': 0, 'isSystem': 0}
 
@@ -1017,12 +965,10 @@ class CommandPub(Command):
             cfg['isSystem'] = data[i]
             i += 1
 
-            ret['cfg'].append(cfg)
-            print("cfg: {: <12} size: {: >3} kb, version: {: >5}, usgCnt: {}, installCnt: {}, isSystem: {}".format(cfg['name'], cfg['size'] // 1024, cfg['version'], cfg['usgCnt'], cfg['installCnt'], cfg['isSystem']))
+            lst.append(cfg)
+            print(f"cfg: {cfg['name']: <12} size: {cfg['size'] // 1024: >3} kb, version: {cfg['version']: >5}, usgCnt: {cfg['usgCnt']}, installCnt: {cfg['installCnt']}, isSystem: {cfg['isSystem']}")
 
-        ret['ret'] = True
-
-        return ret
+        return (True, lst)
 
     ## rename a configuration
     def cfgRename(self, oldName, newName, password):
@@ -1035,7 +981,7 @@ class CommandPub(Command):
     ## delete a configuration
     def cfgDelete(self, name, usePassword = False, password = 0):
         bak = self._Command__com.getTimeout()
-        self._Command__com.setTimeout(20.0)
+        self._Command__com.setTimeout(self.longTimeout)
 
         data = utils.strToList(name, self.CFG_NAME_LEN)
         if usePassword:
@@ -1050,7 +996,7 @@ class CommandPub(Command):
     ## 	Delete the configuration that has not been used for the longest time
     def cfgDeleteLessUsed(self):
         bak = self._Command__com.getTimeout()
-        self._Command__com.setTimeout(20.0)
+        self._Command__com.setTimeout(self.longTimeout)
 
         data = []
         self._Command__com.sendFrame(0xD6, data)
@@ -1063,47 +1009,40 @@ class CommandPub(Command):
     ## get free space available
     def cfgFreeSpace(self):
         bak = self._Command__com.getTimeout()
-        self._Command__com.setTimeout(20.0)
+        self._Command__com.setTimeout(self.longTimeout)
 
         cmdId = 0xD7
         data = []
         self._Command__com.sendFrame(cmdId, data)
-        ret = {'ret': False, 'totalSize': 0, 'freeSpace': 0}
         
-        rcv = self._Command__rcvAnswer(self.cfgFreeSpace.__name__, cmdId)
+        rcv = self.rcvAnswer(self.cfgFreeSpace.__name__, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, 0, 0)
 
         self._Command__com.setTimeout(bak)
 
         totalSize = utils.listToUInt(rcv['data'][0:4])
         freeSpace = utils.listToUInt(rcv['data'][4:8])
 
-        print("Cfg: totalSize: {} kB, freeSpace: {} kB, usedSpace: {} kB".format(totalSize // 1024, freeSpace // 1024, (totalSize - freeSpace) // 1024))
-        ret['ret'] = True
-        ret['totalSize'] = totalSize
-        ret['freeSpace'] = freeSpace
+        print(f"Cfg: totalSize: {totalSize // 1024} kB, freeSpace: {freeSpace // 1024} kB, usedSpace: {(totalSize - freeSpace) // 1024} kB")
 
-        return ret
+        return (True, totalSize, freeSpace)
 
     ## get number of config
     def cfgGetNb(self):
         cmdId = 0xD8
         data = []
         self._Command__com.sendFrame(cmdId, data)
-        ret = {'ret': False, 'nb': 0}
 
-        rcv = self._Command__rcvAnswer(self.cfgGetNb.__name__, cmdId)
+        rcv = self.rcvAnswer(self.cfgGetNb.__name__, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, 0)
 
         nb = rcv['data'][0]
 
-        print("Cfg: nb:{}".format(nb))
-        ret['ret'] = True
-        ret['nb'] = nb
+        print(f"Cfg: nb:{nb}")
 
-        return ret
+        return (True, nb)
 
     ## Shutdown the device
     def shutdown(self):
@@ -1117,7 +1056,7 @@ class CommandPub(Command):
         self._Command__com.sendFrame(0xE1, data)
         return self._Command__com.receiveAck()
     
-    ## Read deivce info parameter
+    ## Read device info parameter
     PROD_PARAM_ID_HW_PLATFORM = 0
     PROD_PARAM_ID_MANUFACTURER = 1
     PROD_PARAM_ID_MFR_ID = 2
@@ -1139,20 +1078,18 @@ class CommandPub(Command):
         cmdId = 0xE3
         data = [paramId]
         self._Command__com.sendFrame(cmdId, data)
-        ret = {'ret': False, 'data': []}
 
-        rcv = self._Command__rcvAnswer(self.rdDevInfo.__name__, cmdId)
+        rcv = self.rcvAnswer(self.rdDevInfo.__name__, cmdId)
         if not rcv['ret']:
-            return ret
+            return (False, [])
 
-        ret['ret'] = True
-        ret['data'] =  rcv['data']
+        data =  rcv['data']
 
-        intFmt = ', '.join(str(i) for i in rcv['data'])
-        hexFmt = ', '.join('0x{:02X}'.format(x) for x in rcv['data'])
-        strFmt = ''.join(chr(c) for c in rcv['data'])
+        intFmt = ', '.join(str(i) for i in data)
+        hexFmt = ', '.join(f'0x{x:02X}' for x in data)
+        strFmt = ''.join(chr(c) for c in data)
 
         idName = ["HW_PLATFORM", "MANUFACTURER", "MFR_ID", "PRODUCT_TYPE", "SUB_MODEL", "FW_VERSION", "SERIAL_NUMBER", "BATT_MODEL", "LENS_MODEL", "DISPLAY_MODEL", "DISPLAY_ORIENTATION", "CERTIF_1", "CERTIF_2", "CERTIF_3", "CERTIF_4", "CERTIF_5", "CERTIF_6"]
-        print("{}:\n\tint: [{}]\n\thex: [{}]\n\tstr: [{}]".format(idName[paramId], intFmt, hexFmt, strFmt))
+        print(f"{idName[paramId]}:\n\tint: [{intFmt}]\n\thex: [{hexFmt}]\n\tstr: [{strFmt}]")
 
-        return ret
+        return (True, data)

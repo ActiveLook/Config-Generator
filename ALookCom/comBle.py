@@ -1,12 +1,13 @@
-import struct
-from time import sleep, time
 
-from ble import Ble
-from bleClient import BleClient
-from com import Com
-import utils
+from time import time
+
+from .ble import Ble
+from .bleClient import BleClient
+from .com import Com
 
 class ComBle(Com):
+    _BLE_ADV_ALOOK_UUID  = '0000fe9f-0000-1000-8000-00805f9b34fb'
+
     __FRAME_FMT_QUERY_LEN_MSK = 0x0F
 
     __FRAME_HEADER_SIZE  = 1
@@ -36,8 +37,7 @@ class ComBle(Com):
         self.__rcvData = []
         self.__rcvDataLen = 0
         self.__rcvRawFrame = []
-        self.__ble = Ble()
-        self.__timeout = 1.75
+        self.__timeout = 4.0
 
     ## get frame datat size
     def __rcvGetHeaderSize(self):
@@ -122,7 +122,7 @@ class ComBle(Com):
         ret = False
         if self.__rcvCmdId == 0xB4:
              ## USB text
-             print("msg: {}".format(bytearray(self.__rcvData).decode('ascii')))
+             print(f"msg: {bytearray(self.__rcvData).decode('ascii')}")
              ret = True
         elif self.__rcvCmdId == 0x07:
             ## Command echo
@@ -130,7 +130,7 @@ class ComBle(Com):
             ret = True
         elif self.__rcvCmdId == 0xE2:
             ## error
-            print("error: cmdId = {}, err = {}, sub = {}".format(self.__rcvData[0], self.__rcvData[1], self.__rcvData[2]))
+            self._rcvError(self.__rcvQuery, self.__rcvData[0], self.__rcvData[1], self.__rcvData[2])
             ret = True
 
         return ret
@@ -152,36 +152,35 @@ class ComBle(Com):
     ## Look for Ble device with "A.LooK " in name
     def findDevice(self):
         print("Scanning devices...")
-        return self.findDeviceByName("A.LooK ")
+        ble = Ble()
+        return ble.scanBySrv(self._BLE_ADV_ALOOK_UUID)
 
     ## Look for Ble device who match name
-    def findDeviceByName(self, name, timeout=15):
-        print("Scanning for {}...".format(name))
-        t1 = time()
-        while abs(time()-t1) < timeout:
-            devices = self.__ble.scanDevices()
-            for d in devices:
-                if name in d.name:
-                    return d
-                    
-
-        return 
+    def findDeviceByName(self, name, timeout=30.0):
+        print(f"Scanning for {name}...")
+        ble = Ble()
+        return ble.scanByName(name, timeout)
 
     ## Look for Ble device who match address
-    def findDeviceByAddr(self, addr, timeout=15):
-        print("Scanning for {}...".format(addr))
-        t1 = time()
-        while abs(time()-t1) < timeout:
-            devices = self.__ble.scanDevices()
-            for d in devices:
-                if addr == d.address:
-                    return d
+    def findDeviceByAddr(self, addr, timeout=30.0):
+        ble = Ble()
 
-        return 
+        ## handle public and private address
+        ## even if public address should not be used
+        pub = "80:" + addr[3:]
+        pvt = "C0:" + addr[3:]
+
+        print(f"Scanning for {addr}...")
+        d = ble.scanByAddr([pub, pvt], timeout)
+
+        return d
 
     ## get RSSI of the device
     def getRssi(self, dev):
         return dev.rssi
+
+    def getMtu(self):
+        return self.__dev.getMtu()
     
     ## open serial
     def open(self, device):
@@ -191,11 +190,12 @@ class ComBle(Com):
 
     ## 
     def close(self):
-        self.__dev.disconnect()
+        if self.__dev != None:
+            self.__dev.disconnect()
 
     ##
-    def sendFrame(self, cmdId, data):
-        frame = self.formatFrame(cmdId, data)
+    def sendFrame(self, cmdId, data, queryId=[]):
+        frame = self.formatFrame(cmdId, data, queryId)
         self.__sendData(frame)
 
     ## return : {'ret', 'cmdId', 'data'}
@@ -204,15 +204,14 @@ class ComBle(Com):
             b = self.__dev.read(1, self.__timeout)
             if len(b) != 1:
                 ## Timeout
-                return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData}
+                return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData, 'query': self.__rcvQuery}
 
             if self.__rcvByte(b[0]):
                 if self.__rcvCmdId == cmdId:
-                    return  {'ret': True, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData}
+                    return  {'ret': True, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData, 'query': self.__rcvQuery}
                 else:
                     if not self.__asyncData():
-                        self.printFrameError("wrong cmd Id received", self.__rcvRawFrame)
-                        return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData}
+                        return  {'ret': False, 'cmdId': self.__rcvCmdId, 'data': self.__rcvData, 'query': self.__rcvQuery}
 
 
     ## receive answer to cmd
@@ -242,9 +241,9 @@ class ComBle(Com):
     def sendRawData(self, bin):
         self.__sendData(bin)
 
-    ## get commands data max size
-    def getDataSizeMax(self):
-        return 512
+    ## disable usage of control notification
+    def setIgnoreCtrl(self, value):
+        self.__dev.setIgnoreCtrl(value)
 
     ## get BLE name
     def getBleName(self):
@@ -261,5 +260,6 @@ class ComBle(Com):
     def getBleInfo(self):
         return self.__dev.getValueInfo()
 
-    def getAdvtManufacturerData(self, comName):
-        return self.__ble.getAdvtManufacturerData(comName)
+    ## check if there was a swipe since the last call
+    def isSwipe(self):
+        return self.__dev.isSwipe()
