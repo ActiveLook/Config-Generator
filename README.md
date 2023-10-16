@@ -17,6 +17,8 @@ For Windows user please install latest release using the following link: <https:
   * `pip install bleak`
   * `pip install nest_asyncio`
   * `pip install image`
+  * `pip install colormath`
+  * `pip install heatshrink2`
 ## Important
 
 Your graphic configuration may be uploaded on your eyewear through USB cable, or using Bluetooth link.
